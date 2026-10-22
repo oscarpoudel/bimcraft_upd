@@ -38,6 +38,7 @@ import { el } from './ui-util.js';
 import { ModelWriter } from './model-write.js';
 import { openingFamilies, readFamilies, setFamilySize, familyWriter } from './family-ops.js';   // 0.6 DC.114: families and their sizes
 import { familyFor, sizeValues, sizeKey } from './family-model.js';
+import { classParts, labelParts } from './model-part.js';   // 0.6 (bim-draw): the plan's Parts view (all / structural / architectural)
 
 const CUT = 1200;   // mm above the level: where the plan cuts (4'-0")
 const RCP_CUT = 2300;   // 0.6 DC.117: where a ceiling plan cuts and looks up from (about 7'-6")
@@ -49,19 +50,20 @@ export function mountModel(host) {
   const $ = (s) => root.querySelector(s);
   const ui = {
     toggle: $('[data-model-toggle]'), wrap: $('[data-plan-wrap]'), canvas: $('[data-plan-canvas]'), bar: $('[data-modelbar]'),
-    level: $('[data-model-level]'), kind: $('[data-model-viewkind]'), tools: [...root.querySelectorAll('[data-mtool]')], wallOpts: $('[data-mopts="wall"]'),
+    level: $('[data-model-level]'), kind: $('[data-model-viewkind]'), part: $('[data-model-parts]'), tools: [...root.querySelectorAll('[data-mtool]')], wallOpts: $('[data-mopts="wall"]'),
     wallRef: $('[data-model-wallref]'), wallSide: $('[data-model-wallside]'), wallShape: $('[data-model-wallshape]'), wallType: $('[data-model-walltype]'), wallTop: $('[data-model-walltop]'), wallH: $('[data-model-wallh]'), typed: $('[data-model-typed]'),
     layout: [...root.querySelectorAll('[data-model-layout]')], fit: $('[data-model-fit]'), units: $('[data-model-units]'),
     levelsSec: $('[data-levels-sec]'), levels: $('[data-levels]'), stageEl: root.querySelector('.bc-stage'), hint: $('[data-model-hint]'),
     typedRow: $('[data-mtyped-row]'), toolbar: $('[data-toolbar]'),
     oOpts: { door: $('[data-mopts="door"]'), window: $('[data-mopts="window"]') },
     schedSec: $('[data-msched-sec]'), sched: $('[data-msched]'), schedKind: $('[data-msched-kind]'), schedCsv: $('[data-msched-csv]'),
-    dims: $('[data-model-dims]'), print: $('[data-model-print]'),
+    dims: $('[data-model-dims]'), print: $('[data-model-print]'), grids: $('[data-model-grids]'),
   };
   if (!ui.toggle || !ui.wrap) return null;
 
   const S = {
     on: false, layout: 'split', level: null, kind: 'plan', tool: 'select',   // kind: the level's floor plan or its ceiling plan ('rcp', 0.6 DC.117) busy: false, queue: [], again: false,
+    part: 'all', parts: null, partsFor: null, partLabels: null,   // the Parts view: 'all' | 'structure' | 'architecture'; the maps are built when it is not 'all'
     data: null, outlines: new Map(), cut: null, cutFor: null, chain: null, last: null, hoverKey: null,
     wall: { reference: 'center', side: 'left', typeKey: 'ext-2x6', top: 'level', height: 2438.4, shape: 'straight' }, units: readUnits(),   // shape: straight | arc (0.6 round 2)
     open: {
@@ -70,7 +72,7 @@ export function mountModel(host) {
     },
     hover: null, drag: null,
     slab: { floor: { mode: 'room', kind: 'wood', thickness: FLOOR_KINDS[0].t }, ceiling: { mode: 'room', height: null, thickness: 12.7 }, roof: { pitch: Math.atan(6 / 12) * 180 / Math.PI, overhang: 304.8, ends: 'hip', fascia: true } },
-    loops: null, dims: true, sched: 'doors',
+    loops: null, dims: true, sched: 'doors', grids: true,   // grids: the model bar's Grid lines button (plan and 3D)
   };
   S.callout = null;   // 0.6 DC.117 (c): the callout shown (its id; views-ui.js) — it draws S.level's S.kind cropped — else null
   let pv = null;
@@ -142,6 +144,9 @@ export function mountModel(host) {
   function refresh(fitToo = false) {
     if (!S.on || !ed()) return;
     S.data = snapshotModel(ed());
+    const model = host.model();
+    const mtag = model ? model.modelID + ':' + model.triangles : null;
+    if (mtag !== S.partsFor) { S.parts = model ? classParts(model) : null; S.partsFor = mtag; S.partLabels = null; }
     const levels = S.data.levels;
     if (!levels.length) { host.status(t('model.err.nolevels'), true); return; }
     if (!levels.some((l) => l.id === S.level)) S.level = (levels.find((l) => Math.abs(l.elevation) < 1) || levels[0]).id;
@@ -170,7 +175,30 @@ export function mountModel(host) {
     for (const x of exts) { const r = x.viewRange?.(S.level, S.kind, S.callout); if (r) return r; }
     // 0.6 DC.117: a ceiling plan with no settings of its own looks up from 2300 mm to the level's height
     if (S.kind === 'rcp') return { kind: 'rcp', cut: RCP_CUT, top: level()?.height || 3000, bottom: 0, depth: 0, hiddenClasses: new Set(), hiddenGuids: new Set() };
-    return { cut: CUT, top: null, bottom: 0, depth: 50, hiddenClasses: new Set(), hiddenGuids: new Set() };
+    // the plan sees what is overhead too, up to the level's top: the Parts view keeps the beams and columns of it (below)
+    // Deck beams can belong to the supported storey while their entire body
+    // lies below its datum. A structural plan includes that storey's framing
+    // down to the preceding floor; the architectural 50 mm depth clips it out.
+    // Saved/custom ranges above remain authoritative.
+    const current = level();
+    const previous = S.data?.levels.filter((l) => l.elevation < current?.elevation - 1).at(-1);
+    const depth = S.part === 'structure' ? Math.max(50, previous ? current.elevation - previous.elevation : current?.height || 3000) : 50;
+    return { cut: CUT, top: level()?.height || 3000, bottom: 0, depth, hiddenClasses: new Set(), hiddenGuids: new Set(), aboveParts: true };
+  }
+  /** The Parts view's explicit labels (StructAlign's groups or its ModelPart property), built once when it is first used. */
+  function ensurePartLabels() {
+    if (S.part === 'all' || S.partLabels || !host.model()) return;
+    try { S.partLabels = labelParts(host.ifc()?.api, host.model().modelID, host.model(), ed()?.W); } catch (e) { S.partLabels = new Map(); }
+  }
+  const partOf = (key) => S.partLabels?.get(key) || S.parts?.get(key) || null;
+  /** True when the Parts view leaves this element out (no part — a slab, a duct — is in every view). */
+  const partHidden = (key) => S.part !== 'all' && !!partOf(key) && partOf(key) !== S.part;
+  /** The elements the Parts view hides, added to the cut's skip: classes first, the file's labels over them. */
+  function partSkip(skip) {
+    if (S.part === 'all') return;
+    ensurePartLabels();
+    for (const [k, p] of S.parts || []) if (p !== S.part) skip.add(k);
+    for (const [k, p] of S.partLabels || []) { if (p === S.part) skip.delete(k); else skip.add(k); }
   }
   /** Keys of elements the view hides: by class (the model's classOf) and by GlobalId. */
   function hiddenKeys(r) {
@@ -192,9 +220,11 @@ export function mountModel(host) {
     const model = host.model(), ifc = host.ifc();
     if (!model || !ifc) { S.cut = null; return; }
     const r = viewRange();
-    const tag = model.modelID + ':' + S.level + ':' + S.kind + ':' + model.batches.length + ':' + model.triangles + ':' + [r.cut, r.top, r.bottom, r.depth, ...r.hiddenClasses, ...r.hiddenGuids].join(',');
+    ensurePartLabels();
+    const tag = model.modelID + ':' + S.level + ':' + S.kind + ':' + S.part + ':' + (S.partLabels?.size || 0) + ':' + model.batches.length + ':' + model.triangles + ':' + [r.cut, r.top, r.bottom, r.depth, ...r.hiddenClasses, ...r.hiddenGuids].join(',');
     if (S.cutFor === tag && S.cut) return;
     const own = ownKeys(), skip = new Set([...own, ...hiddenKeys(r)]);
+    partSkip(skip);
     const w = ed().placer();
     let M;
     try { M = viewerToPlan(ifc.api.GetCoordinationMatrix(model.modelID), storeyWorldMm(w, S.level)); } catch (e) { S.cut = null; return; }
@@ -220,20 +250,23 @@ export function mountModel(host) {
   }
   /** The plan scene of the level shown (also for the sheets: api.sceneFor). */
   function makeScene() {
-    const vr = viewRange();
-    const walls = wallsHere().filter((w) => !hiddenOwn(vr, 'IfcWall', w.guid));
+    const vr = viewRange(), k = kb();
+    const walls = wallsHere().filter((w) => !hiddenOwn(vr, 'IfcWall', w.guid) && !partHidden(k + w.id));
     S.outlines = wallOutlines(walls.map((w) => ({ key: w.guid, a: w.a, b: w.b, t: w.t, bulge: w.bulge })));
-    const k = kb(), own = ownKeys(), ops = openingsHere().filter((o) => !hiddenOwn(vr, o.kind === 'window' ? 'IfcWindow' : 'IfcDoor', o.guid));
+    const own = ownKeys(), ops = openingsHere().filter((o) => !hiddenOwn(vr, o.kind === 'window' ? 'IfcWindow' : 'IfcDoor', o.guid) && !partHidden(k + o.id));
     const byWall = new Map(walls.map((w) => [w.id, w]));
     const scene = {
       walls: walls.map((w) => { const poly = S.outlines.get(w.guid) || []; return { key: k + w.id, guid: w.guid, poly, pieces: poly.length ? wallPieces(w, poly, ops.filter((o) => o.wall === w.id), vr.cut) : [] }; }),
       symbols: ops.filter((o) => byWall.has(o.wall) && (!S.drag || S.drag.op.guid !== o.guid)).map((o) => ({ key: k + o.id, guid: o.guid, ...openingSymbol(o, byWall.get(o.wall)) })),
-      rooms: hiddenOwn(vr, 'IfcSpace', '') ? [] : roomsScene(), dims: [],
+      rooms: S.part === 'structure' ? [] : (hiddenOwn(vr, 'IfcSpace', '') ? [] : roomsScene()), dims: [],
       cut: (S.cut?.cut || []).filter((c) => !own.has(c.key)),
       below: (S.cut?.below || []).filter((c) => !own.has(c.key)),
       above: (S.cut?.above || []).filter((c) => !own.has(c.key)),
       crop: vr.crop || null, scale: vr.scale || 0,   // 0.6 DC.117: the view's crop region and scale (sheets, print)
     };
+    // the Parts view: what lies overhead is the structure of the level (beams, and the columns cut above): dashed, as a
+    // plan draws a beam it cuts below; no ceilings or ducts (a view of its own, 0.6 DF.19, keeps its own range)
+    if (vr.aboveParts) scene.above = S.part === 'architecture' ? [] : scene.above.filter((c) => partOf(c.key) === 'structure');
     if (S.kind === 'rcp') {
       // 0.6 DC.117, a ceiling plan: the walls cut at its height, no door or window symbols, no rooms or dimensions; what is above
       // the cut (ceilings, lights, beams) drawn solid and thin, as a plan draws what is below it
@@ -284,6 +317,17 @@ export function mountModel(host) {
 
   // ---- dimensions, schedules, print (BM.7) ----
   ui.dims?.addEventListener('click', () => { S.dims = !S.dims; ui.dims.setAttribute('aria-pressed', S.dims ? 'true' : 'false'); buildScene(); });
+  /** Grid lines, on or off (0.6 DF.16): the plan's grid lines (model-grids-ui.js) and the 3D reference lines (bimcraft.js).
+   *  Snapping to them is not affected: the tools keep snapping to the model's grids either way. */
+  function setGrids(on) {
+    S.grids = !!on;
+    ui.grids?.setAttribute('aria-pressed', S.grids ? 'true' : 'false');
+    extTool('grid')?.gridsVisible?.(S.grids);
+    host.grid3d?.(S.grids);
+    host.gridsChanged?.(S.grids);   // the side panel's Grid block (bimcraft.js) follows the model bar
+    buildScene();
+  }
+  ui.grids?.addEventListener('click', () => setGrids(!S.grids));
   ui.schedKind?.addEventListener('change', () => { S.sched = ui.schedKind.value; renderSchedule(); });
   function scheduleData() {
     const loops = new Map();
@@ -334,6 +378,15 @@ export function mountModel(host) {
   ui.level.addEventListener('change', () => { S.level = Number(ui.level.value); S.callout = null; endChain(); S.cutFor = null; refresh(); fitPlan(); });
   // 0.6 DC.117: the level's floor plan or its reflected ceiling plan
   ui.kind?.addEventListener('change', () => showKind(S.level, ui.kind.value === 'rcp' ? 'rcp' : 'plan'));
+  // 0.6 (bim-draw): the Parts view — the whole building, its structure only, or its architecture only
+  function setPart(part) {
+    const next = ['structure', 'architecture'].includes(part) ? part : 'all';
+    if (ui.part) ui.part.value = next;
+    if (S.part === next) return;
+    S.part = next; S.partLabels = null; S.cutFor = null; refresh();
+  }
+  ui.part?.addEventListener('change', () => setPart(ui.part.value));
+  if (ui.part) ui.part.value = S.part;
   function showKind(levelId, kind, callout = null) {
     if (!S.data?.levels.some((l) => l.id === levelId)) return;
     if (!S.on) show(true);
@@ -1307,7 +1360,7 @@ export function mountModel(host) {
     S, root, host, t, ed, kb, commit, refresh, buildScene, drawOverlay, setTool, level, levelAbove, wallsHere, wallsOn, snapAt,
     /** Snap as the Wall tool does, from a point of the extension's own (0.6: outlines drawn by hand): angles, Shift, lengths. */
     snapFrom: (p, e, from) => snapPoint(p, snapCtx(), { tol: pv.pxToMm(SNAP_PX), from, ortho: !!e?.shiftKey, step: 15, round: from ? round() : 0 }),
-    pv: () => pv, units: () => S.units, round, selectedKeys, renderProps: () => renderProps(), loopsOf: (st) => loopsOf(ed(), st), fitPlan, mergeJournals,
+    pv: () => pv, units: () => S.units, round, selectedKeys, gridsOn: setGrids, renderProps: () => renderProps(), loopsOf: (st) => loopsOf(ed(), st), fitPlan, mergeJournals,
     /** The plan scene of any level (the sheets' plans), the level shown left as it was. */
     sceneFor(levelId, kind = 'plan', callout = null) {
       const keep = { level: S.level, kind: S.kind, callout: S.callout, loops: S.loops, outlines: S.outlines, cut: S.cut, cutFor: S.cutFor };
@@ -1327,6 +1380,16 @@ export function mountModel(host) {
   };
   return {
     decorate,
+    // the side panel's Grid block and the Library's Grid card (ui.inc, bimcraft.js): the same state and actions as the
+    // model bar's Grid lines button (0.6 DF.16 (b))
+    gridsOn: (on) => setGrids(on),
+    /** Show the plan with the Grid tool and its "Place a grid…" dialog, from the Library or the side panel. */
+    gridPlace() { if (!canDraw()) { host.status(t('model.needs.ifc')); return; } show(true); setTool('grid'); extTool('grid')?.openPlace?.(); },
+    /** Auto grid: the lines through the model's beams (else its columns, else its walls), written as a real grid — the
+     *  plan opens so the lines and their labels are there to change (0.6 DF.16 (b)). */
+    gridAuto() { if (!canDraw()) { host.status(t('model.needs.ifc')); return false; } show(true); return !!extTool('grid')?.autoGrid?.(); },
+    /** Pick a grid line (its label) in the plan, from the side panel's list. */
+    gridPick(tag) { if (!canDraw()) return false; show(true); setTool('grid'); return !!extTool('grid')?.pick?.(tag); },
     // another file: its 3D view first (Draw off); New building turns Draw on again right after
     opened() { S.cutFor = null; S.level = null; endChain(); S.queue = []; S.empty3d = !(host.viewer()?.allKeys?.().size); if (S.on) show(false); },
     stage(which) { if (which !== 'ifc' && S.on) show(false); },
@@ -1347,12 +1410,16 @@ export function mountModel(host) {
       // a reload this module did not start (Undo, Redo, a placement): what was clicked meanwhile goes in now
       if (!S.busy && S.queue.length) { const q = S.queue.splice(0); for (const [run, meta] of q) apply0(run, meta); scheduleRebuild(null); }
     },
-    picked() { if (pv && S.on) { pv.setSelection(selectedKeys()); drawOverlay(); } },
+    picked() {
+      if (pv && S.on) { pv.setSelection(selectedKeys()); drawOverlay(); }
+      for (const x of exts) x.picked?.();   // an extension that works in 3D too (Modify › Extend beam: pick the second beam there)
+    },
     /** The project origin / survey markers changed (coords-ui.js): draw the plan again. */
     coordsChanged() { if (pv && S.on) { pv.markers = host.coords?.()?.planMarkers(S.planM) || []; pv.render(); } },
     /** A tool that works in the 3D view (Paint, Views, Render) is starting: the plan-only layout goes to Split (0.6 BIM-F5). */
     need3d() { if (!S.on || S.layout !== 'plan') return false; S.layout = 'split'; applyLayout(); return true; },
     show,
+    setPart,
     get on() { return S.on; },
     /** 0.6 DC.117: which view of the level is shown ('plan' | 'rcp'), its level, and the ceiling over a point (placing). */
     get kind() { return S.on ? S.kind : null; }, get level() { return S.level; }, get callout() { return S.on ? S.callout : null; }, ceilingZ,

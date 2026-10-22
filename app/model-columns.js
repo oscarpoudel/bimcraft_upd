@@ -20,6 +20,7 @@ import { op } from './model-ops.js';
 import { readLevels, levelAbove } from './model-levels.js';
 import { ids, val } from './ifc-util.js';
 import { round } from './model-write.js';
+import { markStructural } from './model-part-write.js';
 
 export const COLUMN_PSET = 'CadCraft_Column';
 const IN = 25.4;
@@ -71,6 +72,7 @@ function writeColumn(w, c) {
     id = w.make('IFCCOLUMN', ...args);
     w.contain(id, c.storey);
     w.associateMaterial(id, w.material('Concrete'));   // i18n-ignore: material name in the file
+    markStructural(w, id);
   } else {
     const line = w.api.GetLine(w.mid, id, false);
     w.movePlacement(line.ObjectPlacement.value, c.at[0], c.at[1], 0, c.angle);

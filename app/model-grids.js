@@ -10,7 +10,7 @@
  * every line in exactly one list (IfcGridAxis WR2), so a grid of one family only is written IRREGULAR with its last line in
  * the other list, and a single line gets an untagged twin (SameSense false) in the other list; `CadCraft_Grid` (Families
  * "tag=u|v;…", Bubbles, Twin) says how to read it back. A 'FootPrint' 'GeometricCurveSet' of the lines lets other programs
- * draw it. IfcGrid lines from other programs are read for display and snapping (2D polylines), never changed.
+ * draw it. IfcGrid lines from other programs are read for display and snapping (2D polylines/indexed polylines), never changed.
  *
  *   nextTag(tag)               '1' → '2', '9' → '10', 'A' → 'B', 'H' → 'J' (I and O are skipped, as on drawings), 'Z' → 'AA',
  *                              'A.1' → 'A.2'
@@ -22,6 +22,14 @@
  *   readGrids(w) → [{ id, guid, own, bubbles, axes: [{ tag, a, b (file mm, world), fam }] }]
  *   toPlan(w, storey, grids) → the same with a, b in that storey's plan
  *   gridSnap(axes) → { lines: [{ a, b }], points: [[x, y]] }   the lines and where they cross (plan mm)
+ *   gridSnapPoint(p, axes, tol) → { p, kind: 'cross' | 'line', tags } | null   the anchor (a crossing first, then a
+ *                              line) nearest plan point p within tol mm, with the labels it snaps to (placing in 3D)
+ *   suggestGridAxes(points, { tol, extend }) → [{ tag, a, b, fam }]   a grid through the distinct x's and y's of the
+ *                              points (column centres, beam/wall ends): numbered lines across, lettered lines up
+ *   structurePoints(w, storey) → [[x, y]…]   imported/authored columns' centres, else beam ends, else authored wall ends
+ *   autoGridFor(w, storey) → [{ tag, a, b, fam }]   the lines Auto grid writes for that level, in its plan mm
+ *   suggestGrid(w, { tol, extend }) → { own: false, auto: true, bubbles, axes } | null   the grid to draw for a model
+ *                              that has no IfcGrid: through imported/authored columns, else beams or walls, in world mm
  *   gridsInView(axes, dir) → [{ tag, x }]   the lines an elevation or section looking along `dir` sees end on (within 30° of
  *                              it), at x = along the view's right ([dir.y, −dir.x], res-views.js), for the sheets
  *   ops (IfcEditor.modelChange, one undo step each): placeGrid({ storey, axes: [{ tag?, a, b, fam? }] }) (added to the
@@ -32,6 +40,10 @@
 import { op } from './model-ops.js';
 import { scaleT } from './model-write.js';
 import { ids, val, inv4, mul4, apply4 } from './ifc-util.js';
+import { readWalls } from './model-walls.js';
+import { beamMesh } from './model-beam-extend.js';
+import { beamStackAxis } from './model-frame-stack.js';
+import { labelParts } from './model-part.js';
 
 export const GRID_PSET = 'CadCraft_Grid';
 export const BUBBLES = ['both', 'start', 'end', 'none'];
@@ -77,9 +89,32 @@ export function gridLayout({ origin = [0, 0], angle = 0, u = {}, v = {}, extend 
 const worldMm = (w, lp) => scaleT(lp ? w.api.GetWorldTransformMatrix(w.mid, lp) : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], w.unitMm);
 function curvePoints(w, cid) {
   const c = cid ? w.api.GetLine(w.mid, cid, false) : null;
-  if (!c || !/IfcPolyline$/i.test(c.constructor?.name || '')) return null;
-  return (c.Points || []).map((h) => { const p = w.api.GetLine(w.mid, h.value, false); return (p.Coordinates || []).map((x) => Number(val(x)) * w.unitMm); });
+  if (!c) return null;
+  const cls = c.constructor?.name || '';
+  if (/IfcPolyline$/i.test(cls)) return (c.Points || []).map((h) => {
+    const p = w.api.GetLine(w.mid, h.value, false);
+    return (p.Coordinates || []).map((x) => Number(val(x)) * w.unitMm);
+  });
+  if (!/IfcIndexedPolyCurve$/i.test(cls)) return null;
+  const list = c.Points ? w.api.GetLine(w.mid, c.Points.value, false) : null;
+  const points = (list?.CoordList || []).map((row) => row.map((x) => Number(val(x)) * w.unitMm));
+  if (!c.Segments?.length) return points;
+  const ordered = [];
+  for (const segment of c.Segments) {
+    // An arc cannot be displayed/snapped as the chord between its endpoints.
+    const name = segment.name || segment.constructor?.name || '';
+    if (/ArcIndex/i.test(name)) return null;
+    const indices = segment.value ?? segment;
+    if (!Array.isArray(indices)) return null;
+    for (const index of indices) {
+      const point = points[Number(val(index)) - 1];
+      if (!point) return null;
+      if (ordered.at(-1) !== point) ordered.push(point);
+    }
+  }
+  return ordered;
 }
+
 function parseFamilies(text) {
   const m = new Map();
   for (const part of String(text || '').split(';')) { const i = part.lastIndexOf('='); if (i > 0) m.set(part.slice(0, i), part.slice(i + 1)); }
@@ -114,6 +149,135 @@ export function readGrids(w) {
   }
   return out;
 }
+
+/** Repeated IFC grids on different storeys share plan lines. Draw/snap each
+ * labelled line once, while preserving every original IfcGrid in the file. */
+export function distinctGridAxes(grids) {
+  const unique = new Map();
+  for (const grid of grids) for (const axis of grid.axes) {
+    const ends = [axis.a, axis.b].map((p) => p.map((v) => Math.round(v)).join(',')).sort();
+    const key = JSON.stringify([axis.tag, axis.fam, ...ends]);
+    const value = { ...axis, own: grid.own, auto: !!grid.auto, bubbles: grid.bubbles };
+    const previous = unique.get(key);
+    if (!previous || (value.own && !previous.own) || (!value.auto && previous.auto)) unique.set(key, value);
+  }
+  return [...unique.values()];
+}
+
+/**
+ * A grid drawn from the structural points of a model that has none (0.6 DF.16 (b)): each distinct x is a numbered line,
+ * each distinct y a lettered one, extended `extend` past the outermost. Points within `tol` of an earlier one join it,
+ * so columns in a row make one line. Input/output use the same millimetre frame;
+ * optional angle is its grid direction in radians.
+ */
+export function suggestGridAxes(points, { tol = 300, extend = 1500, maxLines = 40, angle = 0 } = {}) {
+  // Rotate around a nearby origin to cluster the building grid, rather than
+  // the file/survey axes. Rotate the finished lines back into the input frame.
+  if (angle && Number.isFinite(angle)) {
+    const origin = (points || []).find((p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+    if (!origin) return [];
+    const c = Math.cos(angle), s = Math.sin(angle);
+    const local = points.filter((p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1])).map((p) => { const x = p[0] - origin[0], y = p[1] - origin[1]; return [c * x + s * y, -s * x + c * y]; });
+    const world = (p) => [origin[0] + c * p[0] - s * p[1], origin[1] + s * p[0] + c * p[1]];
+    return suggestGridAxes(local, { tol, extend, maxLines }).map((axis) => ({ ...axis, a: world(axis.a), b: world(axis.b) }));
+  }
+  const pts = (points || []).filter((p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  if (!pts.length) return [];
+  const cluster = (vals) => {
+    const s = [...vals].sort((a, b) => a - b), out = [];
+    for (const v of s) if (!out.length || Math.abs(v - out[out.length - 1]) > tol) out.push(v);
+    return out;
+  };
+  const xs = cluster(pts.map((p) => p[0])), ys = cluster(pts.map((p) => p[1]));
+  if (!xs.length || !ys.length || xs.length + ys.length > maxLines) return [];
+  const x0 = xs[0] - extend, x1 = xs[xs.length - 1] + extend, y0 = ys[0] - extend, y1 = ys[ys.length - 1] + extend;
+  const out = [];
+  let tg = '1';
+  for (const x of xs) { out.push({ tag: tg, a: [x, y0], b: [x, y1], fam: 'u' }); tg = nextTag(tg); }
+  tg = 'A';
+  for (const y of ys) { out.push({ tag: tg, a: [x0, y], b: [x1, y], fam: 'v' }); tg = nextTag(tg); }
+  return out;
+}
+
+/** Grid geometry is read from all IFC frame members, not just CadCraft-authored
+ * property sets. Keep this separate from the editing readers, which must only
+ * offer their own parametrically editable products to the authoring tools. */
+function gridStructure(w) {
+  if (w._gridStructure) return w._gridStructure;
+  const classes = ['IFCBEAM', 'IFCBEAMSTANDARDCASE', 'IFCCOLUMN', 'IFCCOLUMNSTANDARDCASE'];
+  const classOf = new Map();
+  for (const cls of classes) { try { for (const id of ids(w.api, w.mid, cls)) classOf.set(id, cls); } catch { /* schema may omit a standard-case class */ } }
+  const parts = labelParts(w.api, w.mid, { keyBase: 0, classOf }, w.W), storeys = w.storeyOf();
+  const levels = new Set(w.info().storeys.map((s) => s.id));
+  const parents = new Map();
+  for (const rid of ids(w.api, w.mid, 'IFCRELAGGREGATES')) {
+    const rel = w.api.GetLine(w.mid, rid, false);
+    for (const h of rel.RelatedObjects || []) parents.set(h.value, rel.RelatingObject?.value);
+  }
+  const by = new Map(), matrices = new Map();
+  for (const [id, cls] of classOf) {
+    if (parts.get(id) === 'architecture') continue;
+    let storey = storeys.get(id), guard = 0;
+    while (storey && !levels.has(storey) && guard++ < 20) storey = parents.get(storey);
+    if (!levels.has(storey)) continue;
+    try {
+      const mesh = beamMesh(w.api, w.mid, id, w.unitMm);
+      if (!mesh) continue;
+      if (!matrices.has(storey)) matrices.set(storey, inv4(w.storeyWorld(storey)));
+      const Mi = matrices.get(storey), plan = (p) => { const q = apply4(Mi, ...p); return [q[0], q[1]]; };
+      const row = by.get(storey) || { columns: [], beams: [] };
+      if (/COLUMN/.test(cls)) {
+        // Mesh bounds include section/profile offsets absent from ObjectPlacement.
+        const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+        for (const p of mesh.verts) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p[k]); hi[k] = Math.max(hi[k], p[k]); }
+        row.columns.push(plan(lo.map((v, k) => (v + hi[k]) / 2)));
+      } else {
+        const axis = beamStackAxis(mesh);
+        if (axis) row.beams.push({ a: plan(axis.a), b: plan(axis.b) });
+      }
+      by.set(storey, row);
+    } catch { /* an unreadable product must not discard all other structure */ }
+  }
+  w._gridStructure = by;
+  return by;
+}
+function gridSource(w, storey) {
+  const row = gridStructure(w).get(storey);
+  const points = row?.columns.length ? row.columns : (row?.beams || []).flatMap((b) => [b.a, b.b]);
+  let x = 0, y = 0, weight = 0;
+  for (const b of row?.beams || []) {
+    const dx = b.b[0] - b.a[0], dy = b.b[1] - b.a[1], length = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
+    x += length * Math.cos(4 * angle); y += length * Math.sin(4 * angle); weight += length;
+  }
+  const angle = weight && Math.hypot(x, y) > .25 * weight ? Math.atan2(y, x) / 4 : 0;
+  if (points.length) return { points, angle };
+  // Preserve the wall-only authoring workflow for models without frame members.
+  const walls = readWalls(w, storey);
+  return { points: walls.flatMap((wall) => [wall.a, wall.b]), angle: 0 };
+}
+
+/** Column centres first; beam plan endpoints, then authored walls, as fallback. */
+export function structurePoints(w, storey) { return gridSource(w, storey).points; }
+
+export function autoGridFor(w, storey) {
+  const source = gridSource(w, storey);
+  return suggestGridAxes(source.points, { angle: source.angle });
+}
+
+/** Unsaved reference grid for a model without IfcGrid. Choose the richest usable
+ * level, skipping levels whose irregular coordinates exceed the line limit. */
+export function suggestGrid(w, opts = {}) {
+  let best = null;
+  for (const level of w.info().storeys) {
+    const source = gridSource(w, level.id);
+    const axes = suggestGridAxes(source.points, { angle: source.angle, ...opts });
+    if (axes.length && (!best || source.points.length > best.points)) best = { storey: level.id, points: source.points.length, axes };
+  }
+  if (!best) return null;
+  return { id: null, guid: null, own: false, auto: true, bubbles: 'both',
+    axes: best.axes.map((axis) => ({ ...axis, a: planToWorld(w, best.storey, axis.a), b: planToWorld(w, best.storey, axis.b) })) };
+}
+
 export function toPlan(w, storey, grids) {
   const Mi = inv4(w.storeyWorld(storey));
   const P = (q) => { const r = apply4(Mi, q[0], q[1], 0); return [r[0], r[1]]; };
@@ -131,6 +295,36 @@ export function gridSnap(axes) {
     points.push([p[0] + r[0] * t, p[1] + r[1] * t]);
   }
   return { lines, points };
+}
+
+/**
+ * The grid anchor nearest plan point p within `tol` mm: a crossing of two lines first (kind 'cross', both labels),
+ * then a line (kind 'line', its label), else null. `axes` = readGrids' axes in any consistent space. Where an item
+ * placed in the 3D view snaps to (bimcraft.js); the plan's snapping (snapPoint, model-tools.js) already uses the
+ * same lines and crossings through gridSnap.
+ */
+export function gridSnapPoint(p, axes, tol = 1000) {
+  let cross = null;
+  for (let i = 0; i < axes.length; i++) for (let j = i + 1; j < axes.length; j++) {
+    const a = axes[i], b = axes[j];
+    const r = [a.b[0] - a.a[0], a.b[1] - a.a[1]], s = [b.b[0] - b.a[0], b.b[1] - b.a[1]];
+    const den = r[0] * s[1] - r[1] * s[0];
+    if (Math.abs(den) < 1e-6 * Math.hypot(...r) * Math.hypot(...s)) continue;
+    const t = ((b.a[0] - a.a[0]) * s[1] - (b.a[1] - a.a[1]) * s[0]) / den, u = ((b.a[0] - a.a[0]) * r[1] - (b.a[1] - a.a[1]) * r[0]) / den;
+    if (t < -1e-6 || t > 1 + 1e-6 || u < -1e-6 || u > 1 + 1e-6) continue;
+    const q = [a.a[0] + r[0] * t, a.a[1] + r[1] * t], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (d <= tol && (!cross || d < cross.d)) cross = { p: q, d, tags: [a.tag, b.tag].filter(Boolean) };
+  }
+  if (cross) return { p: cross.p, kind: 'cross', tags: cross.tags };
+  let line = null;
+  for (const x of axes) {
+    const d = [x.b[0] - x.a[0], x.b[1] - x.a[1]], l2 = d[0] * d[0] + d[1] * d[1];
+    if (!l2) continue;
+    const s = Math.max(0, Math.min(1, ((p[0] - x.a[0]) * d[0] + (p[1] - x.a[1]) * d[1]) / l2));
+    const q = [x.a[0] + d[0] * s, x.a[1] + d[1] * s], dd = Math.hypot(p[0] - q[0], p[1] - q[1]);
+    if (dd <= tol && (!line || dd < line.d)) line = { p: q, d: dd, tags: [x.tag].filter(Boolean) };
+  }
+  return line ? { p: line.p, kind: 'line', tags: line.tags } : null;
 }
 
 export function gridsInView(axes, dir) {

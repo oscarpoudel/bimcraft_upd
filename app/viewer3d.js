@@ -15,6 +15,8 @@
  *                                              section-volume.js — a union of cells with tilted faces and extra planes)
  *   v.setGrips([{ p, kind }] | null, hover)   section box grips (0.5 WL.2), IFC rel. points; v.gripAt(x, y) → index | -1;
  *   v.onGrip = (phase 'start'|'move'|'end', index, event) => …   a drag on a grip (orbit and picking stay out of it);
+ *   v.setGridLines({ lines: [[a, b]…] } | null)   the model's grid lines as 3D reference lines (0.6 DF.16; BimCraft
+ *                                              puts the labels over the canvas, project); drawn over the model
  *   v.rayIfc(x, y) → { o, d, view }            the pointer's ray in the section box's space (IFC axes, m from the min corner)
  *   v.setSectionTurn(rad)                      sections square to a building turned in its site (0.5 BM.9): the Front / Side
  *                                              planes and the box run along axes turned by `rad` about the vertical (the
@@ -143,6 +145,7 @@ export class Viewer3D {
     for (const o of this.caps || []) if (o.userData.capPlane) o.material.color.copy(this.colors.cap);
     this.scene.background = this.colors.bg;
     for (const e of this.edges) for (const m of e.material) m.color.copy(this.colors.edge);
+    for (const c of this.gridGroup?.children || []) c.material.color.copy(this.colors.edge);
     if (this.highlight) this.highlight.material.color.copy(this.colors.pick);
     if (this.sectionFrame) this.sectionFrame.material.color.copy(this.colors.pick);
     this.render();
@@ -169,6 +172,7 @@ export class Viewer3D {
   /** Remove every model. */
   clear() {
     this.select(null);
+    this.setGridLines(null);
     for (const L of this.layers.values()) this.disposeLayer(L);
     this.layers.clear();
     this.relist();
@@ -1069,6 +1073,25 @@ export class Viewer3D {
     if (v.z > 1) return null;
     const r = this.canvas.getBoundingClientRect();
     return { x: r.left + (v.x + 1) / 2 * r.width, y: r.top + (1 - v.y) / 2 * r.height };
+  }
+
+  /**
+   * The model's grid lines as 3D reference lines (0.6 DF.16, BimCraft's page): o = { lines: [[a, b], …] }, each line
+   * a pair of world points, or null to take them off. Annotation lines: drawn over the model, not sectioned, not
+   * picked. The page puts the labels over the canvas (project, like Measure's).
+   */
+  setGridLines(o) {
+    if (this.gridGroup) { this.gridGroup.traverse((x) => { x.geometry?.dispose(); x.material?.dispose(); }); this.gridGroup.removeFromParent(); this.gridGroup = null; }
+    if (o?.lines?.length) {
+      const g = new THREE.Group();
+      const ls = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(o.lines.flat().map((p) => new THREE.Vector3(...p))),
+        new THREE.LineBasicMaterial({ color: this.colors.edge, transparent: true, opacity: 0.6, depthTest: false }));
+      ls.renderOrder = 5;
+      g.add(ls);
+      this.gridGroup = g;
+      this.scene.add(g);
+    }
+    this.render();
   }
 
   /** Measure's drawing: lines (start, end), corner dots, face highlights, a hover marker. Drawn over the model. */

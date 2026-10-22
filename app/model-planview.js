@@ -191,6 +191,17 @@ export class PlanView {
       if ((c.loops || []).some((l) => inLoop(x, y, l))) return c.key;
       for (let i = 0; i < c.segs.length; i += 4) if (segD(x, y, c.segs[i], c.segs[i + 1], c.segs[i + 2], c.segs[i + 3]) <= tol) return c.key;
     }
+    // Projected members (including deck beams below the level datum) are
+    // editable model elements too. Pick their nearest visible outline; do not
+    // treat the empty area of a projected slab/roof as a selectable fill.
+    let projected = null, distance = tol;
+    for (const c of [...this.scene.below || [], ...this.scene.above || []]) {
+      for (let i = 0; i < c.segs.length; i += 4) {
+        const d = segD(x, y, c.segs[i], c.segs[i + 1], c.segs[i + 2], c.segs[i + 3]);
+        if (d <= distance && (projected === null || d < distance)) { projected = c.key; distance = d; }
+      }
+    }
+    if (projected !== null) return projected;
     for (const r of this.scene.rooms || []) if (r.poly && inPoly(x, y, r.poly)) return r.key;
     for (const s of this.scene.symbols) if (s.roof && s.poly && inPoly(x, y, s.poly)) return s.key;
     return null;
@@ -312,7 +323,8 @@ export class PlanView {
     g.save(); g.lineWidth = 1; g.setLineDash([14, 4, 2, 4]);
     for (const x of list) {
       const [p, q] = this.gridEnds(x, S);
-      g.strokeStyle = x.sel ? (C['--action'] || '#2563eb') : (C['--ink-2'] || '#666'); g.globalAlpha = x.sel ? 1 : 0.85;
+      g.strokeStyle = x.sel ? (C['--action'] || '#2563eb') : (C['--ink-2'] || '#666');
+      g.globalAlpha = x.sel ? 1 : x.auto ? 0.45 : 0.85;   // a grid drawn from the model's columns and walls (0.6 DF.16 (b)): fainter
       g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(q.x, q.y); g.stroke();
     }
     g.restore();

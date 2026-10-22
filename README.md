@@ -36,3 +36,22 @@ npm test                    # the app's tests; libraries are fetched by exact ve
 ## License
 
 Apache License 2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)). Libraries and their licenses: [THIRD_PARTY.md](THIRD_PARTY.md). Where the code comes from: [PROVENANCE.md](PROVENANCE.md). The names are trademarks; a fork must rename: [TRADEMARKS.md](TRADEMARKS.md).
+
+## Structural drawing
+
+The Draw tab works on structural models (opened as IFC) as well as architectural ones:
+
+- **Beams.** `Build › Beam` (B) draws a beam from one point to another, snapped to grids and walls like the Wall tool, with its width, depth and how far above the level top it sits. Beams already in an opened IFC are picked and edited the same way, and `Modify › Extend beam` runs one beam to another.
+- **Auto grid.** A model with no grid of its own shows one drawn through its beams (then its columns, then its walls' ends) — fainter, and snapped to like a real grid. **Auto grid** writes it into the model as a grid you can change afterwards, picking the floor that has structure automatically. Grid lines show in the plan and the 3D view with their bubbles; the **Grid lines** button on the model bar, the **Properties** tab and the **Library** turn them on and off or lay one out by spacing.
+- **Parts.** The plan's **Parts** menu shows the whole level, only its structure (beams, columns, members, footings and piles) or only its architecture (walls, doors, windows, rooms, stairs and furniture); structure lying overhead is drawn dashed.
+- **Copy a floor's frame.** Select a floor's beams and columns and click **Copy to floor**, switch floors, then **Paste on this floor**: the missing members are placed at the same world X/Y, existing matches are skipped, and member sizes and heights are preserved.
+- **Move a frame, or its whole vertical stack.** Drag a beam or column in plan to move it. **Select vertical stack** gathers the aligned members above and below it (or the columns at the same plan position) so the whole stack moves as one.
+
+When placing or pasting, items snap to a grid crossing, then a grid line, then the nearest wall.
+
+## Local structural-viewer integration
+
+When opened using **Edit combined IFC in BimCraft** in the structural viewer,
+the `structalign` edit link loads that model and routes Save as IFC / Ctrl+S
+back to a versioned viewer revision. The viewer reloads automatically. Normal
+standalone saving is unchanged. See [BIMCRAFT_EDITING.md](../BIMCRAFT_EDITING.md).

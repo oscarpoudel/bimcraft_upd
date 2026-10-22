@@ -309,7 +309,7 @@ $__rvtPreview = $__rvtVer !== '' ? "/assets/vendor/$__rvtLib/$__rvtVer/rvt.js" :
 
     <div class="bc-equip bc-ifc-equip" data-ifc-equip hidden></div>
 
-    <div class="bc-canvas" data-canvas-wrap hidden><canvas data-canvas aria-label="<?= Lang::e('ui.canvas.label') ?>"></canvas><div class="bc-measure-labels" data-measure-labels aria-hidden="true"></div></div>
+    <div class="bc-canvas" data-canvas-wrap hidden><canvas data-canvas aria-label="<?= Lang::e('ui.canvas.label') ?>"></canvas><div class="bc-measure-labels" data-measure-labels aria-hidden="true"></div><div class="bc-grid-labels" data-grid-labels aria-hidden="true"></div></div>
     <?php /* Plan view + model bar (0.5 part 3, track BM): model-ui.js / model-planview.js. Beside the 3D view (Split) or alone (Plan). */ ?>
     <div class="bc-plan" data-plan-wrap hidden>
       <canvas data-plan-canvas aria-label="<?= Lang::e('model.plan.label') ?>"></canvas>
@@ -318,6 +318,10 @@ $__rvtPreview = $__rvtVer !== '' ? "/assets/vendor/$__rvtLib/$__rvtVer/rvt.js" :
           <label><span class="visually-hidden"><?= Lang::e('model.level') ?></span><select class="bc-mb-select" data-model-level aria-label="<?= Lang::e('model.level') ?>"></select></label>
           <?php /* 0.6 DC.117 (bim-views_PART_2): the level's floor plan or its reflected ceiling plan */ ?>
           <label><span class="visually-hidden"><?= Lang::e('model.viewkind') ?></span><select class="bc-mb-select" data-model-viewkind aria-label="<?= Lang::e('model.viewkind') ?>"><option value="plan"><?= Lang::e('model.viewkind.plan') ?></option><option value="rcp"><?= Lang::e('model.viewkind.rcp') ?></option></select></label>
+          <?php /* 0.6 (bim-draw): all parts, the structure only, or the architecture only (model-part.js) */ ?>
+          <label><span class="visually-hidden"><?= Lang::e('model.part') ?></span><select class="bc-mb-select" data-model-parts aria-label="<?= Lang::e('model.part') ?>">
+            <option value="all"><?= Lang::e('model.part.all') ?></option><option value="structure"><?= Lang::e('model.part.structure') ?></option><option value="architecture"><?= Lang::e('model.part.architecture') ?></option>
+          </select></label>
           <span class="bc-mb-tools">
             <button type="button" class="bc-tool" data-mtool="select" aria-pressed="true" title="<?= Lang::e('model.tool.select.title') ?>"><i class="bi bi-cursor" aria-hidden="true"></i><span><?= Lang::e('model.tool.select') ?></span></button>
             <button type="button" class="bc-tool" data-mtool="wall" aria-pressed="false" title="<?= Lang::e('model.tool.wall.title') ?>"><i class="bi bi-bricks" aria-hidden="true"></i><span><?= Lang::e('model.tool.wall') ?></span></button>
@@ -333,6 +337,8 @@ $__rvtPreview = $__rvtVer !== '' ? "/assets/vendor/$__rvtLib/$__rvtVer/rvt.js" :
                 <?php /* Grids and columns (0.6 DF.16, bim-draw): model-grids-ui.js through model-ui.js extend(). */ ?>
                 <button type="button" class="bc-tool" data-mtool="grid" aria-pressed="false" title="<?= Lang::e('model.tool.grid.title') ?>"><i class="bi bi-hash" aria-hidden="true"></i><span><?= Lang::e('model.tool.grid') ?></span></button>
                 <button type="button" class="bc-tool" data-mtool="column" aria-pressed="false" title="<?= Lang::e('model.tool.column.title') ?>"><i class="bi bi-square-fill" aria-hidden="true"></i><span><?= Lang::e('model.tool.column') ?></span></button>
+                <?php /* Beams from one point to another (0.6, bim-draw): model-beams-ui.js. */ ?>
+                <button type="button" class="bc-tool" data-mtool="beam" aria-pressed="false" title="<?= Lang::e('model.tool.beam.title') ?>"><i class="bi bi-bounding-box" aria-hidden="true"></i><span><?= Lang::e('model.tool.beam') ?></span></button>
                 <?php /* Floors of any shape and ramps (0.6 DF.18, bim-draw): model-floors-ui.js. */ ?>
                 <button type="button" class="bc-tool" data-mtool="drawfloor" aria-pressed="false" title="<?= Lang::e('model.tool.drawfloor.title') ?>"><i class="bi bi-pentagon" aria-hidden="true"></i><span><?= Lang::e('model.tool.drawfloor') ?></span></button>
                 <button type="button" class="bc-tool" data-mtool="ramp" aria-pressed="false" title="<?= Lang::e('model.tool.ramp.title') ?>"><i class="bi bi-graph-up-arrow" aria-hidden="true"></i><span><?= Lang::e('model.tool.ramp') ?></span></button>
@@ -368,6 +374,7 @@ $__rvtPreview = $__rvtVer !== '' ? "/assets/vendor/$__rvtLib/$__rvtVer/rvt.js" :
               <div class="bc-mb-menu" role="group" aria-label="<?= Lang::e('model.tools.modify') ?>">
                 <button type="button" class="bc-tool" data-mtool="trim" aria-pressed="false" title="<?= Lang::e('model.tool.trim.title') ?>"><i class="bi bi-arrows-collapse-vertical" aria-hidden="true"></i><span><?= Lang::e('model.tool.trim') ?></span></button>
                 <button type="button" class="bc-tool" data-mtool="corner" aria-pressed="false" title="<?= Lang::e('model.tool.corner.title') ?>"><i class="bi bi-bounding-box-circles" aria-hidden="true"></i><span><?= Lang::e('model.tool.corner') ?></span></button>
+                <button type="button" class="bc-tool" data-mtool="extendbeam" aria-pressed="false" title="<?= Lang::e('model.tool.extendbeam.title') ?>"><i class="bi bi-arrows-angle-expand" aria-hidden="true"></i><span><?= Lang::e('model.tool.extendbeam') ?></span></button>
               </div>
             </details>
             <?php /* Annotate (0.6 DC.117 (c)(d), bim-views_PART_2): a callout of this view (views-ui.js) and drafting drawn in it (drafting-ui.js). */ ?>
@@ -394,6 +401,8 @@ $__rvtPreview = $__rvtVer !== '' ? "/assets/vendor/$__rvtLib/$__rvtVer/rvt.js" :
             </details>
           </span>
           <span class="bc-mb-right">
+            <?php /* 0.6 DF.16 (b): the model's grid lines, in the plan and the 3D view (model-ui.js, viewer3d.js) */ ?>
+            <button type="button" class="bc-tool" data-model-grids aria-pressed="true" title="<?= Lang::e('model.grid3d.title') ?>"><i class="bi bi-grid-3x3" aria-hidden="true"></i><span class="visually-hidden"><?= Lang::e('model.grid3d') ?></span></button>
             <button type="button" class="bc-tool" data-model-dims aria-pressed="true" title="<?= Lang::e('model.dims.title') ?>"><i class="bi bi-arrows" aria-hidden="true"></i><span class="visually-hidden"><?= Lang::e('model.dims') ?></span></button>
             <button type="button" class="bc-tool" data-model-print title="<?= Lang::e('model.print.title') ?>"><i class="bi bi-printer" aria-hidden="true"></i><span class="visually-hidden"><?= Lang::e('model.print') ?></span></button>
             <button type="button" class="bc-tool" data-res-sheetsopen title="<?= Lang::e('res.sh.open.title') ?>"><i class="bi bi-files" aria-hidden="true"></i><span class="visually-hidden"><?= Lang::e('res.sh.title') ?></span></button>
@@ -549,6 +558,7 @@ $__rvtPreview = $__rvtVer !== '' ? "/assets/vendor/$__rvtLib/$__rvtVer/rvt.js" :
           </select></label>
         </div>
         <div class="bc-modelbar-row" data-mopts="grid" hidden>
+          <button type="button" class="btn-plot btn-sm-cc" data-grid-auto title="<?= Lang::e('ui.grid.auto.title') ?>"><?= Lang::e('ui.grid.autobtn') ?></button>
           <button type="button" class="btn-line btn-sm-cc" data-grid-place><?= Lang::e('model.grid.place') ?></button>
           <label><span><?= Lang::e('model.grid.bubbles') ?></span> <select class="bc-mb-select" data-grid-bubbles></select></label>
           <span data-grid-picked hidden>
@@ -626,6 +636,11 @@ $__rvtPreview = $__rvtVer !== '' ? "/assets/vendor/$__rvtLib/$__rvtVer/rvt.js" :
           </select></label>
           <label><span><?= Lang::e('model.ot.h') ?></span> <input type="text" class="bc-input bc-num" data-col-height size="7" aria-label="<?= Lang::e('model.col.height') ?>"></label>
           <button type="button" class="btn-line btn-sm-cc" data-col-grid><?= Lang::e('model.col.grid') ?></button>
+        </div>
+        <div class="bc-modelbar-row" data-mopts="beam" hidden>
+          <label><span><?= Lang::e('model.ot.w') ?></span> <input type="text" class="bc-input bc-num" data-beam-width size="7" aria-label="<?= Lang::e('model.beam.width') ?>"></label>
+          <label><span><?= Lang::e('model.col.d') ?></span> <input type="text" class="bc-input bc-num" data-beam-depth size="7" aria-label="<?= Lang::e('model.beam.depth') ?>"></label>
+          <label><span><?= Lang::e('model.beam.top') ?></span> <input type="text" class="bc-input bc-num" data-beam-top size="7" aria-label="<?= Lang::e('model.beam.top') ?>"></label>
         </div>
         <div class="bc-modelbar-row" data-mopts="roofplane" hidden>
           <label><span><?= Lang::e('model.rf.pitch') ?></span> <input type="text" class="bc-input bc-num" data-res-rppitch size="6"></label>
@@ -754,6 +769,16 @@ $__rvtPreview = $__rvtVer !== '' ? "/assets/vendor/$__rvtLib/$__rvtVer/rvt.js" :
     </div>
     <section class="bc-sec" id="bc-pane-props" role="tabpanel" aria-labelledby="bc-tab-props" data-rpane="props">
       <h2 class="bc-h"><?= Lang::e('ui.properties') ?></h2>
+      <?php /* 0.6 DF.16 (b): the model's grid — on or off, its lines, and "Place a grid…" (bimcraft.js renderGridPanel) */ ?>
+      <div class="bc-gridbox" data-gridbox hidden>
+        <label class="bc-check"><input type="checkbox" data-gridbox-show checked> <?= Lang::e('model.grid3d') ?></label>
+        <p class="bc-muted" data-gridbox-note hidden></p>
+        <ul class="bc-gridtags" data-gridbox-list></ul>
+        <p class="bc-gridactions">
+          <button type="button" class="btn-plot btn-sm-cc" data-gridbox-auto title="<?= Lang::e('ui.grid.auto.title') ?>"><?= Lang::e('ui.grid.autobtn') ?></button>
+          <button type="button" class="btn-line btn-sm-cc" data-gridbox-place><?= Lang::e('model.grid.place') ?></button>
+        </p>
+      </div>
       <div data-props><p class="bc-muted"><?= Lang::e('ui.props.empty') ?></p></div>
     </section>
     <section class="bc-sec" id="bc-pane-color" role="tabpanel" aria-labelledby="bc-tab-color" data-rpane="color" hidden>
@@ -768,6 +793,15 @@ $__rvtPreview = $__rvtVer !== '' ? "/assets/vendor/$__rvtLib/$__rvtVer/rvt.js" :
     </section>
     <section class="bc-sec" id="bc-pane-lib" role="tabpanel" aria-labelledby="bc-tab-lib" data-rpane="library" hidden>
       <h2 class="bc-h"><?= Lang::e('ui.library') ?></h2>
+      <?php /* 0.6 DF.16 (b): a grid is a component too — place a whole grid from the library (bimcraft.js) */ ?>
+      <div class="bc-libgrid" data-lib-grid hidden>
+        <p class="bc-gridtitle"><i class="bi bi-grid-3x3" aria-hidden="true"></i> <?= Lang::e('ui.lib.grid') ?></p>
+        <p class="bc-muted"><?= Lang::e('ui.lib.grid.desc') ?></p>
+        <p class="bc-gridactions">
+          <button type="button" class="btn-plot btn-sm-cc" data-lib-grid-auto title="<?= Lang::e('ui.grid.auto.title') ?>"><?= Lang::e('ui.grid.autobtn') ?></button>
+          <button type="button" class="btn-line btn-sm-cc" data-lib-grid-place><?= Lang::e('model.grid.place') ?></button>
+        </p>
+      </div>
       <div data-library><p class="bc-muted"><?= Lang::e('ui.lib.nojs') ?></p></div>
     </section>
     <section class="bc-sec" id="bc-pane-analysis" role="tabpanel" aria-labelledby="bc-tab-analysis" data-rpane="analysis" hidden>

@@ -25,7 +25,7 @@ The camera a model opens with: {{ui:Fit}} (the start, the whole model from a cor
 
 ## Placing library items
 
-**Start with wall snap on** (off at the start): when placing or pasting a library item starts, its back snaps to the nearest wall, facing the room. {{key:Tab}} or {{ui:Wall snap}} in the placing bar turns it off for the moment. A storey with no walls starts without it.
+**Start with snap on** (off at the start): when placing or pasting a library item starts, it snaps to a grid crossing, then to a grid line, and otherwise its back goes against the nearest wall, facing the room. {{key:Tab}} or {{ui:Snap}} in the placing bar turns it off for the moment. A storey with no walls and a model with no grids start without it.
 
 ## Section box
 

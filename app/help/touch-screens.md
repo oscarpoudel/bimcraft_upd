@@ -42,7 +42,7 @@ Tap {{ui:Walk}}, then tap the floor where you want to stand. A row of arrow butt
 
 ## Placing library items
 
-Tap where the item goes. {{ui:Turn 90°}} on the placing bar turns it (the {{key:R}} key on a keyboard), {{ui:Wall snap}} snaps its back to the nearest wall, and {{ui:Stop placing}} ends.
+Tap where the item goes. {{ui:Turn 90°}} on the placing bar turns it (the {{key:R}} key on a keyboard), {{ui:Snap}} snaps it to a grid crossing or a wall, and {{ui:Stop placing}} ends.
 
 ## Measure
 

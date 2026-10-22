@@ -86,6 +86,8 @@
  * Every string that comes from a file reaches the page through el() (text nodes), never
  * innerHTML: a model or folder is untrusted input.
  */
+import { mountViewerBridge } from './structalign-bridge.js';
+import { mountPartFilter } from './model-part-filter.js';
 import * as WebIFC from './ifc/api.js';   // cc-ifc, our own IFC engine (0.4 I.11; was web-ifc)
 import { t, has } from './i18n.js';
 import { IfcModel, keyOf, KEY_SPAN } from './ifc-model.js';
@@ -96,7 +98,12 @@ import { mountRes } from './res-ui.js';   // 0.5 part 4, track RC: the residenti
 import { isCloudFile, cloudSignature, CLOUD_ACCEPT } from './cloud-types.js';   // 0.6 PF (session pointcloud): which files are point clouds
 import { mountCoords } from './coords-ui.js';   // 0.6 DF.15 (bim-draw): coordinate readouts, project origin and survey point
 import { mountTrim } from './model-trim-ui.js';   // 0.6 DF.17 (bim-draw): Modify › Trim / extend, Corner
+import { mountBeamExtend } from './model-beam-ui.js';   // 0.6 (bim-draw): Modify › Extend beam
 import { mountGrids } from './model-grids-ui.js';   // 0.6 DF.16 (bim-draw): Build › Grid, Column
+import { readGrids, gridSnapPoint, suggestGrid, distinctGridAxes } from './model-grids.js';   // 0.6 DF.16 (b): the grid lines in the 3D view, placing snaps to them
+import { mountBeamTool } from './model-beams-ui.js';   // 0.6 (bim-draw): Build › Beam
+import { mountFrameMove } from './model-frame-move-ui.js';
+import { mountFrameCopy } from './model-frame-copy-ui.js';
 import { mountFloors } from './model-floors-ui.js';   // 0.6 DF.18 (bim-draw): Build › Floor by outline, Ramp
 import { mountSite } from './model-site-ui.js';   // 0.6 DF.20 (bim-draw): Build › Site, Add levels…
 import { mountMep } from './mep-ui.js';   // 0.6 DF.29 (bim-draw): Build › Pipe, Duct, Valve
@@ -174,12 +181,13 @@ function init(root) {
   const ui = {
     file: $('[data-file]'), folderInput: $('[data-folder-input]'), recent: $('[data-recent]'), recentList: $('[data-recent] ul'), drop: $('[data-drop]'), veil: $('[data-dropveil]'),   // i18n-ignore: selectors
     status: $('[data-status]'), empty: $('[data-empty]'), toolbar: $('[data-toolbar]'),
-    canvasWrap: $('[data-canvas-wrap]'), canvas: $('[data-canvas]'), card: $('[data-rvt]'), folder: $('[data-folder]'),
+    canvasWrap: $('[data-canvas-wrap]'), canvas: $('[data-canvas]'), gridLabels: $('[data-grid-labels]'), card: $('[data-rvt]'), folder: $('[data-folder]'),
     info: $('[data-file-info]'), infoH: $('[data-file-info] .bc-h'), infoDl: $('[data-file-dl]'),   // i18n-ignore: selectors
     back: $('[data-folder-back]'),
     storeys: $('[data-storeys]'), storeyList: $('[data-storey-list]'), tree: $('[data-tree]'), treeSec: $('[data-tree-sec]'),
     classes: $('[data-classes]'), classList: $('[data-class-list]'),
     props: $('[data-props]'), xrefInput: $('[data-xref-input]'),
+    gridBox: $('[data-gridbox]'), gridShow: $('[data-gridbox-show]'), gridNote: $('[data-gridbox-note]'), gridList: $('[data-gridbox-list]'), gridPlace: $('[data-gridbox-place]'), gridAuto: $('[data-gridbox-auto]'), libGrid: $('[data-lib-grid]'), libGridPlace: $('[data-lib-grid-place]'), libGridAuto: $('[data-lib-grid-auto]'),
     dwg: $('[data-dwg]'), dwgCanvas: $('[data-dwg-canvas]'), equip: $('[data-equip]'), sheetTabs: $('[data-sheet-tabs]'), coords: $('[data-coords]'),
     layers: $('[data-layers]'), layerList: $('[data-layer-list]'),
     changes: $('[data-changes]'), changeList: $('[data-change-list]'), undo: $('[data-undo]'), save: $('[data-save]'),
@@ -198,6 +206,8 @@ function init(root) {
   let rvtOpen = null;      // the RVT/RFA on the card: { file, path, info } (the lab preview converts it)
   let pickToken = 0;
   let folder = null;       // { scan, index } while a folder is open
+  let viewerBridge = null;
+  let modelPartFilter = null;
   let editor = null;       // IfcEditor for the open IFC
   let dwgView = null;      // DrawingView
   let lastDwg = null;      // { file, path, kind } — reopened when linked drawings are added
@@ -646,7 +656,7 @@ function init(root) {
       setView: (v, o) => { const a = viewer.viewTurn; cubeBase.setView({ ...v, dir: rz(v.dir, a), up: rz(v.up, a) }, o); },
     });
     cube3d = ci.c.cube;
-    viewer.onRender = () => { ci.update(); placeMeasureLabels(); coordsUi?.render(); };
+    viewer.onRender = () => { ci.update(); placeMeasureLabels(); coordsUi?.render(); placeGridLabels(); };
     // 0.6 DF.15 (coords-ui.js): where am I working — readouts over the 3D view and the plan, the origin and survey point
     coordsUi = mountCoords({
       wrap3d: ui.canvasWrap, canvas: ui.canvas, planWrap: root.querySelector('[data-plan-wrap]'), t,
@@ -700,6 +710,7 @@ function init(root) {
     viewer.setModelMatrix(0, placementOf(models[0]));
     applyViewTurn();   // 0.6 DC.57: square to a building turned in its site (needs the editor: buildingTurn)
     viewer.view(settings.view);
+    redrawGrid3d();   // 0.6 DF.16 (b): the model's grid lines in the 3D view
     pc?.modelChanged();   // an open point cloud is placed again against the new model
     if (bimMaps || hasSavedMaps()) ensureMaps().then((m) => m.modelChanged(), () => {});   // map layers on the ground (SG.3)
     renderModels();
@@ -1779,6 +1790,7 @@ function init(root) {
     viewer.setModelMatrix(free, placementOf(ent));
     viewer.setModel(m, { add: true });
     if (cut) applySection();
+    redrawGrid3d();   // the model's box changed: the grid lines' reach follows
     renderModels();
     status(t(link ? 'link.loaded' : 'fed.added', { file: file.name, n: m.elements, s: ((performance.now() - t0) / 1000).toFixed(1) }));
     return ent;
@@ -1803,6 +1815,7 @@ function init(root) {
     renderColor();
     clearProps();
     afterPick();
+    redrawGrid3d();   // the grids are this model's now (the active model's editor)
     status(t('fed.active', { file: ent.name }));
   }
   async function removeModel(ent) {
@@ -1810,6 +1823,7 @@ function init(root) {
     if (await keepEdits(ent)) return;
     if (ent === cur()) setActive(models.find((m) => m !== ent));
     viewer.removeModel(ent.mi);
+    redrawGrid3d();   // the model's box changed: the grid lines' reach follows
     viewer.vis.prune((k) => Math.floor(k / KEY_SPAN) !== ent.mi);
     ent.ifc.close();
     ent.asDoc?.close();
@@ -1826,7 +1840,7 @@ function init(root) {
       const radio = el('input', { type: 'radio', name: 'bc-active-model', checked: m === cur(), disabled: !!m.link, title: m.link ? t('link.noedit') : null, 'aria-label': t('fed.edit.this', { file: m.name }), 'data-model-active': String(m.mi) });
       radio.addEventListener('change', () => { if (radio.checked) setActive(m); });
       const vis = el('input', { type: 'checkbox', checked: m.visible, 'aria-label': t('fed.show', { file: m.name }), 'data-model-visible': String(m.mi) });
-      vis.addEventListener('change', () => { m.visible = vis.checked; viewer.setModelVisible(m.mi, m.visible); afterPick(); });
+      vis.addEventListener('change', () => { m.visible = vis.checked; viewer.setModelVisible(m.mi, m.visible); afterPick(); redrawGrid3d(); });
       const off = el('details', { className: 'bc-model-offset', 'data-model-offset': String(m.mi) },
         el('summary', { title: t('fed.offset.title') }, t('fed.offset')),
         el('form', { className: 'bc-model-offset-form', onsubmit: null },
@@ -2046,6 +2060,7 @@ function init(root) {
   function renderChanges() {
     const list = editor ? editor.changes : [];
     ui.changes.hidden = !editor;
+    modelPartFilter?.refresh();
     const VERB = { place: t('changes.verb.place'), swap: t('changes.verb.swap'), update: t('changes.verb.update'), remove: t('edit.verb.removed'), paste: t('edit.verb.pasted') };
     const ATTR = { Name: t('prop.name'), ObjectType: t('prop.objtype'), Tag: t('prop.tag'), Description: t('prop.desc') };
     ui.changeList.replaceChildren(...list.slice().reverse().slice(0, 50).map((c) => (VERB[c.kind] || c.verb || c.kind === 'model')
@@ -2087,17 +2102,51 @@ function init(root) {
    *  download, as before). host.js W2.19. */
   async function saveIfc() {
     if (!unsavedIn(editor)) return true;
+    const savingEditor = editor;
+    const savedChanges = editor.changes.slice();
+    const savedRedo = editor.undone.slice();
+    const savedChangeCount = savedChanges.length;
     const bytes = editor.save();
     let name = editor.isNew ? ifcName : ifcName.replace(/\.ifc$/i, '') + ' (edited).ifc';   // i18n-ignore: the saved file's name (a new building keeps its own)
-    const r = await fileHost.saveAs({ data: new Blob([bytes], { type: 'application/x-step' }), name, types: IFC_TYPES });
+    const linked = viewerBridge?.owns(cur());
+    const download = () => fileHost.saveAs({ data: new Blob([bytes], { type: 'application/x-step' }), name, types: IFC_TYPES });
+    let r = linked ? await viewerBridge.save(bytes) : await download();
+    let fellBack = false;
+    if (linked && !r.ok && r.unreachable) {
+      // The viewer stopped, restarted or dropped the edit session: never leave the edits with nowhere to go.
+      const d = await download();
+      if (d.ok) { r = d; fellBack = true; }
+    }
     if (!r.ok) { status(r.cancelled ? t('save.cancelled') : (r.error?.message || String(r.error)), !r.cancelled); return false; }
     name = r.name || name;
-    const n = editor.changes.length;
-    editor.changes = [];   // saved: the downloaded file holds them; start a fresh change list
-    editor.recovered = false;
-    editor.isNew = false;
+    const n = savedChangeCount;
+    // A downloaded fallback holds the edits, but the viewer is still behind: keep them listed as unsaved so a later
+    // Save (once the viewer is back) still writes the revision.
+    let unchangedSinceSave = !fellBack;
+    if (linked && !fellBack) {
+      // SaveModel writes a fresh header timestamp, so byte equality cannot
+      // identify unchanged edits. Compare both tracked history stacks instead.
+      unchangedSinceSave = savingEditor.changes.length === savedChanges.length &&
+        savingEditor.changes.every((change, index) => change === savedChanges[index]) &&
+        savingEditor.undone.length === savedRedo.length &&
+        savingEditor.undone.every((change, index) => change === savedRedo[index]);
+    }
+    if (unchangedSinceSave) {
+      savingEditor.changes = [];
+      savingEditor.recovered = false;
+    } else {
+      // A save/rebuild can take time. Never clear edits or undo operations made
+      // after the uploaded snapshot, including a now-empty undo history.
+      savingEditor.recovered = true;
+    }
+    savingEditor.isNew = false;
     renderChanges();
-    status(t('save.done', { file: name, n, bytes: bytes.length.toLocaleString('en-US') }));
+    status(fellBack
+      ? `The structural viewer could not take the revision, so the edited IFC was downloaded as ${name}. It is still listed as unsaved here: open the edit link from the viewer again and Save to write the revision.`
+      : linked ? (unchangedSinceSave
+        ? 'Saved to structural viewer; analytical geometry refreshed. Analysis needs rerunning.'
+        : 'Snapshot saved to structural viewer. Your newer edits are still unsaved.')
+        : t('save.done', { file: name, n, bytes: bytes.length.toLocaleString('en-US') }));
     return true;
   }
 
@@ -3507,6 +3556,7 @@ function init(root) {
     ui.ifcEquip.hidden = true;
     if (which !== 'ifc') { stopPlacing(); setPressed('equipment', false, 'lib-tool'); if (meas) measureOff(); if (walking) walkOff(); }
     if (which !== 'ifc' && which !== 'dwg') mode = 'none';
+    renderGridPanel();   // the side panel's Grid block and the Library's Grid card follow the stage (0.6 DF.16 (b))
     if (which !== 'dwg') dwgOpen = which === 'dwg' ? dwgOpen : null;
     if (which !== 'dwg') ui.layers.hidden = true;   // renderLayers() shows it for a drawing
     if (which !== 'ifc') { ui.treeSec.hidden = true; if (ui.modelsSec) ui.modelsSec.hidden = true; if (ui.findSec) ui.findSec.hidden = true; if (ui.clashSec) ui.clashSec.hidden = true; if (ui.checksSec) ui.checksSec.hidden = true; if (ui.qtoSec) ui.qtoSec.hidden = true; if (ui.fdSec) ui.fdSec.hidden = true; }   // fillTree() / renderModels() show them for a model
@@ -3639,6 +3689,98 @@ function init(root) {
         v('ItemUuid') ? el('button', { type: 'button', className: 'btn-line btn-sm-cc', onClick: () => guard(checkUpdates) }, t('lib.updates.button')) : null) : null);
   }
 
+  // ---- Grid lines in the 3D view (0.6 DF.16 (b)): the model's grids, drawn as they are in the plan — the lines at the
+  // model's base and top, the ends joined — with a bubble and label at each line's bubble end. They are reference
+  // lines, not elements: not picked, not saved, regenerated from the IFC each rebuild. The model bar's button
+  // (model-ui.js, host.grid3d) turns them on and off; placing an item snaps to them (gridSnapPoint) while Snap is on.
+  const g3 = { on: true, lines: null, labels: [] };
+  const gridData = () => {
+    if (mode !== 'ifc' || !editor) return [];
+    try {
+      const w = new ModelWriter(editor.W, editor.api, editor.mid);
+      const gs = readGrids(w);
+      // no IfcGrid of its own: a grid through the model's columns (else its walls' ends), drawn, snapped to, not saved
+      if (!gs.some((g) => g.axes.length)) { const s = suggestGrid(w); if (s) gs.push(s); }
+      return gs;
+    } catch (e) { return []; }
+  };
+  /** Where the grid lines run, in the model's own mm: the scene's box from its base to its top, or — a model of levels
+   *  and grids with nothing to draw yet — from the lowest level to 3 m above the highest. */
+  function gridHeight() {
+    const v = viewer;
+    if (v && !v.box.isEmpty()) {
+      const ly = [];   // the box's vertical extent in the model's frame (a placement turns it in plan, not tilted)
+      for (const x of [v.box.min.x, v.box.max.x]) for (const y of [v.box.min.y, v.box.max.y]) for (const z of [v.box.min.z, v.box.max.z]) ly.push(toLocal([x, y, z])[1]);
+      const C = coordMatrix();
+      return [fromViewer(C, [0, Math.min(...ly) - 0.2, 0])[2], fromViewer(C, [0, Math.max(...ly) + 0.4, 0])[2]];
+    }
+    try {
+      const el2 = editor.placer().info().storeys.map((s) => Number(s.elevation) || 0);
+      if (el2.length) return [Math.min(...el2) - 200, Math.max(...el2) + 3000];
+    } catch (e) { /* no levels to go by */ }
+    return [-200, 3000];
+  }
+  function redrawGrid3d() { drawGrid3d(); renderGridPanel(); }
+  function drawGrid3d() {
+    const v = viewer;
+    g3.lines = []; g3.labels = [];
+    if (!v || !g3.on || mode !== 'ifc' || ui.canvasWrap.hidden) { v?.setGridLines(null); placeGridLabels(); return; }
+    const grids = gridData();
+    if (!grids.length) { v.setGridLines(null); placeGridLabels(); return; }
+    const C = coordMatrix(), [zLo, zHi] = gridHeight();
+    const P = (px, py, z) => toWorld(toViewer(C, [px, py, z]));
+    for (const ax of distinctGridAxes(grids)) {
+      const end = ax.bubbles === 'start' ? ax.a : ax.b;
+      g3.lines.push(
+        [P(ax.a[0], ax.a[1], zLo), P(ax.a[0], ax.a[1], zHi)],
+        [P(ax.b[0], ax.b[1], zLo), P(ax.b[0], ax.b[1], zHi)],
+        [P(ax.a[0], ax.a[1], zLo), P(ax.b[0], ax.b[1], zLo)],
+        [P(ax.a[0], ax.a[1], zHi), P(ax.b[0], ax.b[1], zHi)]);
+      if (ax.bubbles !== 'none') g3.labels.push({ p: P(end[0], end[1], zHi), text: ax.tag });   // the plan's bubbles: both, start, end or none
+    }
+    v.setGridLines({ lines: g3.lines });
+    placeGridLabels();
+  }
+  /** The grid labels over the canvas, where the lines' ends project (called with the camera, by onRender). */
+  function placeGridLabels() {
+    const layer = ui.gridLabels;
+    if (!layer) return;
+    if (!g3.lines || !viewer || ui.canvasWrap.hidden) { layer.replaceChildren(); return; }
+    const wrap = ui.canvasWrap.getBoundingClientRect();
+    const tags = [];
+    for (const l of g3.labels) {
+      const p = viewer.project(l.p);
+      if (!p) continue;
+      tags.push(el('span', { className: 'bc-grid-label', style: 'left:' + (p.x - wrap.left).toFixed(1) + 'px;top:' + (p.y - wrap.top).toFixed(1) + 'px' }, l.text));
+    }
+    layer.replaceChildren(...tags);
+  }
+  /** The side panel's Grid block (Properties) and the Library's Grid card: what the grid is, on or off, and its lines. */
+  function renderGridPanel() {
+    const open = mode === 'ifc' && !!editor;
+    if (ui.gridBox) ui.gridBox.hidden = !open;
+    if (ui.libGrid) ui.libGrid.hidden = !open;
+    if (!open) return;
+    if (ui.gridShow) ui.gridShow.checked = !!g3.on;
+    const gs = gridData();
+    const auto = gs.some((g) => g.auto);
+    const axes = distinctGridAxes(gs);
+    if (ui.gridNote) {
+      const text = !axes.length ? t('ui.grid.none') : auto ? t('ui.grid.auto') : '';
+      ui.gridNote.textContent = text;
+      ui.gridNote.hidden = !text;
+    }
+    if (ui.gridList) {
+      const chip = (x) => (x.auto ? el('span', { className: 'bc-gridtag' }, x.tag)
+        : el('button', { type: 'button', className: 'bc-gridtag', title: t('ui.grid.pick'), onClick: () => modelUi?.gridPick?.(x.tag) }, x.tag));
+      const rows = [['u', 'ui.grid.numbered'], ['v', 'ui.grid.lettered']]
+        .map(([fam, key]) => { const ax = axes.filter((x) => (x.fam || 'u') === fam); return ax.length ? el('li', { className: 'bc-gridgroup' }, el('span', { className: 'bc-gridfam' }, t(key)), ...ax.map(chip)) : null; })
+        .filter(Boolean);
+      if (!rows.length) rows.push(el('li', { className: 'bc-gridgroup' }, ...axes.map(chip)));
+      ui.gridList.replaceChildren(...rows);
+    }
+  }
+
   // ---- placing ----
   const pb = {
     name: ui.placebar.querySelector('[data-place-name]'), storey: ui.placebar.querySelector('[data-place-storey]'),
@@ -3672,11 +3814,11 @@ function init(root) {
       const st = pickStorey(paste, info.storeys, paste.model === modelTag);
       if (st && st.how !== 'first') pb.storey.value = String(st.id);
     }
-    placing = { entry, rot: paste ? paste.rot : 0, snap: false, faces: null, last: null, at: null, sha: entry.meta.sha256, paste };
+    placing = { entry, rot: paste ? paste.rot : 0, snap: false, faces: null, grid: distinctGridAxes(gridData()), last: null, at: null, sha: entry.meta.sha256, paste };
     if (pb.mount) pb.mount.value = !paste && modelUi?.kind === 'rcp' ? 'ceiling' : 'floor';   // 0.6 DC.117: a ceiling plan on screen = at the ceiling
     if (settings.snap) {
       placing.faces = editor.placer().wallFaces(Number(pb.storey.value));
-      placing.snap = placing.faces.length > 0;
+      placing.snap = placing.faces.length > 0 || placing.grid.length > 0;   // grids snap too (0.6 DF.16 (b))
     }
     pb.name.textContent = t(paste ? 'place.bar.pasting' : 'place.bar.placing', { name: entry.item.name });
     ui.placebar.hidden = false;
@@ -3710,14 +3852,14 @@ function init(root) {
     if (!placing) return;
     pb.snap.setAttribute('aria-pressed', placing.snap ? 'true' : 'false');
     const a = placing.at;
-    pb.at.textContent = a ? t(a.snapped ? 'place.at.wall' : 'place.at', { x: Math.round(a.x), y: Math.round(a.y), rot: Math.round(a.rot) }) : t('place.rot', { rot: Math.round(placing.rot) });
+    pb.at.textContent = a ? t(a.grid ? 'place.at.grid' : a.snapped ? 'place.at.wall' : 'place.at', { x: Math.round(a.x), y: Math.round(a.y), rot: Math.round(a.rot), g: a.grid || '' }) : t('place.rot', { rot: Math.round(placing.rot) });
   }
   function toggleSnap() {
     if (!placing) return;
     placing.snap = !placing.snap;
     if (placing.snap && !placing.faces) {
       placing.faces = editor.placer().wallFaces(Number(pb.storey.value));
-      if (!placing.faces.length) { placing.snap = false; status(t('place.nowalls'), true); }
+      if (!placing.faces.length && !placing.grid?.length) { placing.snap = false; status(t('place.nowalls'), true); }
     }
     syncPlacebar();
     moveGhost(placing.last);
@@ -3748,9 +3890,14 @@ function init(root) {
     if (!pt) { viewer.setGhost(null); return; }
     const [x, y] = fromViewer(coordMatrix(), toLocal([pt.x, pt.y, pt.z]));
     let at = { x, y, rot: placing.rot, snapped: false };
-    if (placing.snap && placing.faces?.length) {
-      const s = snapToWall([x, y], placing.entry.item, placing.faces);
-      if (s && s.distance < 3000) at = { x: s.x, y: s.y, rot: s.rot, snapped: true };
+    if (placing.snap) {
+      // the grids first (their crossings, then their lines), then a wall (0.6 DF.16 (b))
+      const g = placing.grid?.length ? gridSnapPoint([x, y], placing.grid, 1000) : null;
+      if (g) at = { x: g.p[0], y: g.p[1], rot: placing.rot, snapped: true, grid: g.tags.join(' / ') };
+      else if (placing.faces?.length) {
+        const s = snapToWall([x, y], placing.entry.item, placing.faces);
+        if (s && s.distance < 3000) at = { x: s.x, y: s.y, rot: s.rot, snapped: true };
+      }
     }
     placing.at = at;
     drawGhost(at);
@@ -3809,6 +3956,7 @@ function init(root) {
     const mi = cur().mi;
     viewer.vis.prune((k) => Math.floor(k / KEY_SPAN) !== mi || keys.has(k));   // hidden / isolated stay so (keys survive a rebuild); deleted ones drop out
     viewer.setModel(model, { keepCamera: true });
+    redrawGrid3d();   // 0.6 DF.16 (b): the grid lines follow the rebuild (new lines, a moved building)
     if (cut) applySection();   // the same cut on the rebuilt model
     if (placing) viewer.placeY = toWorld(toViewer(coordMatrix(), [0, 0, storeyElev()]))[1];
     fillStoreys(model);
@@ -4436,10 +4584,22 @@ function init(root) {
     download: (name, data, type) => download(name, data, type),   // schedules' CSV, the plan's PDF
     fileName: () => ifcName,
     coords: () => coordsUi,   // 0.6 DF.15: the plan's readout and markers
+    grid3d: (on) => { g3.on = !!on; redrawGrid3d(); },   // 0.6 DF.16 (b): the model bar's Grid lines button (plan and 3D)
+    gridsChanged: (on) => { if (ui.gridShow) ui.gridShow.checked = !!on; },   // the side panel's Grid block follows the model bar
   });
+  // the side panel's Grid block and the Library's Grid card (0.6 DF.16 (b)): the same state and actions as the model bar
+  ui.gridShow?.addEventListener('change', () => modelUi?.gridsOn?.(ui.gridShow.checked));
+  ui.gridPlace?.addEventListener('click', () => modelUi?.gridPlace?.());
+  ui.gridAuto?.addEventListener('click', () => modelUi?.gridAuto?.());
+  ui.libGridPlace?.addEventListener('click', () => modelUi?.gridPlace?.());
+  ui.libGridAuto?.addEventListener('click', () => modelUi?.gridAuto?.());
   if (modelUi) mountRes(modelUi);   // 0.5 part 4, track RC (res-ui.js): the residential tools join the plan's tools
   if (modelUi) mountTrim(modelUi);   // 0.6 DF.17 (model-trim-ui.js): trim, extend and corner walls
+  if (modelUi) mountBeamExtend(modelUi);   // 0.6 (model-beam-ui.js): extend a beam to another beam
   if (modelUi) mountGrids(modelUi);   // 0.6 DF.16 (model-grids-ui.js): grids and columns
+  if (modelUi) mountBeamTool(modelUi);   // 0.6 (model-beams-ui.js): the Beam tool
+  if (modelUi) mountFrameMove(modelUi);
+  if (modelUi) mountFrameCopy(modelUi);
   if (modelUi) mountFloors(modelUi);   // 0.6 DF.18 (model-floors-ui.js): floors of any shape, ramps
   if (modelUi) mountSite(modelUi);   // 0.6 DF.20 (model-site-ui.js): the site, the building on it, levels
   if (modelUi) mountMep(modelUi);   // 0.6 DF.29 (mep-ui.js): pipe and duct runs with their fittings, valves
@@ -4463,7 +4623,7 @@ function init(root) {
     root, fileHost, status: (text, isError, fade) => status(text, isError, fade),
     fed: {
       add: (file, opts) => addModel(file, opts), remove: (ent) => removeModel(ent), models: () => models, host: () => (mode === 'ifc' ? cur() : null),
-      setMatrix: (ent, M) => { ent.matrix = M; viewer.setModelMatrix(ent.mi, placementOf(ent)); if (cut) applySection(); viewer.render(); },
+      setMatrix: (ent, M) => { ent.matrix = M; viewer.setModelMatrix(ent.mi, placementOf(ent)); if (cut) applySection(); redrawGrid3d(); viewer.render(); },
       viewer: () => viewer, refresh: () => renderModels(),
     },
   });
@@ -4509,6 +4669,20 @@ function init(root) {
     a.onChange(sync); sync();
   })
     .catch((e) => console.warn('add-ons did not start:', e));   // i18n-ignore: a console note
+
+  modelPartFilter = mountPartFilter({
+    W: WebIFC, models: () => mode === 'ifc' ? models : [], viewer: () => viewer,
+    after: ui.changes, status,
+    changed: (part) => { modelUi?.setPart(part); treeView?.sync(); syncVis(); },
+  });
+  window.bimcraftPartFilter = modelPartFilter;
+
+  if (new URLSearchParams(location.search).has('structalign')) {
+    queueMicrotask(() => mountViewerBridge({
+      openIfc: async (bytes, name) => open(new File([bytes], name, { type: 'application/x-step' }), null),
+      current: () => cur(), editor: () => editor, status, after: ui.changes.parentElement,
+    }).then((bridge) => { viewerBridge = bridge; }).catch((error) => status(error.message, true)));
+  }
 
   // ?library=<uuid>: open the panel on that item.
   const deep = new URLSearchParams(location.search).get('library');

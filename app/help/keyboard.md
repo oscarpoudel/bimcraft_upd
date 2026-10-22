@@ -89,7 +89,7 @@ These work while {{ui:Draw}} is on and you are not typing in a field. See [Draw 
 | Key | What it does |
 |---|---|
 | {{key:R}} | Turn the item 90° |
-| {{key:Tab}} | Wall snap on and off: the item's back goes against the nearest wall |
+| {{key:Tab}} | Snap on and off: the item goes to a grid crossing, then a grid line, then a wall |
 | {{key:Enter}} in **X, Y (mm)** | Place at the typed position |
 | {{key:Esc}} | Stop placing or pasting |
 

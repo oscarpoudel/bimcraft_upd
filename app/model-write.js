@@ -36,7 +36,8 @@ const KEEP = /^IFC(GEOMETRICREPRESENTATION(SUB)?CONTEXT|OWNERHISTORY|LOCALPLACEM
 /** Classes the tools look up by GlobalId. */
 const GUID_CLASSES = ['IFCBUILDINGSTOREY', 'IFCBUILDING', 'IFCWALL', 'IFCWALLSTANDARDCASE', 'IFCDOOR', 'IFCWINDOW', 'IFCOPENINGELEMENT', 'IFCSLAB', 'IFCCOVERING', 'IFCROOF', 'IFCSPACE',
   'IFCWALLTYPE', 'IFCDOORTYPE', 'IFCWINDOWTYPE', 'IFCSLABTYPE', 'IFCCOVERINGTYPE', 'IFCROOFTYPE',
-  'IFCCOLUMN', 'IFCGRID', 'IFCRAMP', 'IFCRAMPFLIGHT', 'IFCSITE',   // 0.6 (bim-draw): columns, grids, ramps, the site
+  'IFCCOLUMN', 'IFCCOLUMNSTANDARDCASE', 'IFCGRID', 'IFCRAMP', 'IFCRAMPFLIGHT', 'IFCSITE',   // 0.6 (bim-draw): columns, grids, ramps, the site
+  'IFCBEAM', 'IFCBEAMSTANDARDCASE', 'IFCMEMBER', 'IFCMEMBERSTANDARDCASE',   // 0.6 (bim-draw): Modify › Extend beam
   'IFCELEMENTASSEMBLY'];   // 0.6 DF.29: pipe and duct runs (mep-model.js)
 export const round = (v, d = 6) => { const r = Math.round(v * 10 ** d) / 10 ** d; return Object.is(r, -0) ? 0 : r; };
 

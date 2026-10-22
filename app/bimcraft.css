@@ -152,6 +152,24 @@
 .bc-measure-label { position: absolute; transform: translate(-50%, -130%); padding: .1rem .35rem; background: var(--sheet-2); color: var(--ink);
   border: var(--pen-1) solid var(--action); font-size: .75rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bc-canvas.is-measuring canvas { cursor: crosshair; }
+/* The model's grid lines in the 3D view (0.6 DF.16 (b)): the labels at the lines' tops, a bubble each */
+.bc-grid-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.bc-grid-label { position: absolute; transform: translate(-50%, -50%); padding: .05rem .35rem .05rem .25rem; background: var(--sheet-2);
+  color: var(--ink); border: var(--pen-1) solid var(--line); border-radius: .5rem; font-size: .7rem; line-height: 1.2; white-space: nowrap; }
+/* The grid in the side panel (0.6 DF.16 (b)): the Properties block and the Library's card */
+.bc-gridbox { border-top: var(--pen-1) solid var(--grid); margin: .2rem 0 .8rem; padding-top: .55rem; }
+.bc-gridbox .bc-check { display: flex; align-items: center; gap: .5rem; cursor: pointer; font-weight: 600; }
+.bc-gridbox .bc-check input { accent-color: var(--action); width: 1rem; height: 1rem; }
+.bc-gridtags { list-style: none; margin: .45rem 0 .4rem; padding: 0; display: grid; gap: .35rem; }
+.bc-gridgroup { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .35rem; }
+.bc-gridtag { min-width: 1.6rem; padding: .05rem .35rem; border: var(--pen-1) solid var(--line); border-radius: .35rem;
+  background: var(--sheet-2); color: var(--ink); font: inherit; font-size: var(--fs-sm); text-align: center; }
+button.bc-gridtag { cursor: pointer; }
+button.bc-gridtag:hover, button.bc-gridtag:focus-visible { border-color: var(--action); color: var(--action); }
+.bc-gridfam { color: var(--ink-2); font-size: .75rem; }
+.bc-gridtitle { font-weight: 600; margin: .1rem 0 .25rem; }
+.bc-libgrid { border-bottom: var(--pen-1) solid var(--line); margin-bottom: .6rem; padding-bottom: .55rem; }
+.bc-gridactions { margin: .35rem 0 0; }
 
 /* ---- Section box (0.4 B4) ---- */
 .bc-sec-plane { display: contents; }

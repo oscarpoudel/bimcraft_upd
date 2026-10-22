@@ -192,6 +192,15 @@ export async function draw06Mode({ APP, ROOT, WebIFC, IfcModel, quiet, args = []
     ok(P2(rot[0].a) === '1000,1000' && P2(rot[0].b) === '1000,1000' && G.gridLayout({ u: { count: 3, spacing: [5000, 4000] }, v: { count: 1 } }).filter((x) => x.fam === 'u').map((x) => Math.round(x.a[0])).join() === '0,5000,9000', 'a turned layout; a list of spacings');
     const sn = G.gridSnap(lay);
     ok(sn.lines.length === 5 && sn.points.length === 6 && sn.points.some((q) => P2(q) === '6000,7000'), 'gridSnap: five lines, six crossings (2 / B at 6000, 7000)');
+    const sp = G.gridSnapPoint([6100, 7100], lay, 1000);
+    ok(sp && sp.kind === 'cross' && P2(sp.p) === '6000,7000' && sp.tags.join('/') === '2/B', 'gridSnapPoint: 100 mm from crossing 2 / B, snaps to it with both labels');
+    const sp2 = G.gridSnapPoint([6000, 3000], lay, 1000);
+    ok(sp2 && sp2.kind === 'line' && P2(sp2.p) === '6000,3000' && sp2.tags.join() === '2', 'gridSnapPoint: on line 2 away from a crossing, snaps to the line with its label');
+    ok(G.gridSnapPoint([3000, 3000], lay, 1000) === null, 'gridSnapPoint: in the middle of a bay, out of reach: no snap');
+    ok(G.gridSnapPoint([6100, 7100], lay, 50) === null, 'gridSnapPoint: a tight tolerance misses the crossing');
+    const sug = G.suggestGridAxes([[0, 0], [6000, 0], [6000, 7000], [0, 7000], [6050, 7020]], { extend: 1500 });
+    ok(sug.map((x) => x.tag).join() === '1,2,A,B' && P2(sug[0].a) === '0,-1500' && P2(sug[0].b) === '0,8500' && P2(sug[2].a) === '-1500,0', 'suggestGridAxes: columns at x 0 and 6000 (50 mm apart joins) and y 0 and 7000 make 1, 2 across and A, B up, 1500 past');
+    ok(G.suggestGridAxes(Array.from({ length: 60 }, (_, i) => [i * 1000, i % 2 ? 0 : 5000])).length === 0, 'suggestGridAxes: more lines than it will draw: none');
     const seen = G.gridsInView(lay, [0, -1]);   // the south elevation looks north… (dir = where the eye looks: here −Y = south)
     ok(seen.map((x) => x.tag + '@' + Math.round(x.x)).join() === '3@-12000,2@-6000,1@0' && G.gridsInView(lay, [1, 0]).map((x) => x.tag).join() === 'B,A', 'gridsInView: a view along the numbered lines sees 1, 2, 3 end on (x along its right); one along the lettered lines sees A, B');
     const PDF = await import(path.join(APP, 'model-pdf.js'));
@@ -276,6 +285,21 @@ export async function draw06Mode({ APP, ROOT, WebIFC, IfcModel, quiet, args = []
     saved.gridone = B2.ed.save();
     B2.ed.modelChange(G.removeGridAxes(['1']));
     ok(!ids(B2.ed.api, B2.ed.mid, 'IFCGRID').length && !ids(B2.ed.api, B2.ed.mid, 'IFCGRIDAXIS').length && !danglingRefs(new TextDecoder().decode(B2.ed.save())).length, 'its last line deleted: the grid and its axes go');
+    // a model with no IfcGrid at all: the grid to draw comes from its walls (0.6 DF.16 (b))
+    const B3 = await building();
+    B3.ed.modelChange(B3.OPS.drawWalls({ storey: B3.levels[0].guid, segs: [{ a: [0, 0], b: [6000, 0] }, { a: [6000, 0], b: [6000, 4000] }, { a: [6000, 4000], b: [0, 4000] }, { a: [0, 4000], b: [0, 0] }], typeKey: 'ext-2x6', topLevel: B3.levels[1].guid, height: 3000, extSide: 'right' }));
+    const w3 = new ModelWriter(WebIFC, B3.ed.api, B3.ed.mid);
+    const sg3 = G.suggestGrid(w3);
+    const ux3 = sg3 ? sg3.axes.filter((x) => x.fam === 'u').map((x) => x.a[0]).sort((a, b) => a - b) : [];
+    ok(!G.readGrids(w3).some((g) => g.axes.length) && !!sg3?.auto && !sg3.own && sg3.axes.map((x) => x.tag).join() === '1,2,A,B' && Math.abs(ux3[0]) < 300 && Math.abs(ux3[1] - 6000) < 300, 'suggestGrid: a model with no grid gets 1, 2 across its walls and A, B up');
+    // Auto grid: the lines it writes for the level, in the level's plan mm — beams first, then columns, then walls
+    const ag3 = G.autoGridFor(w3, B3.levels[0].id);
+    ok(ag3.map((x) => x.tag).join() === '1,2,A,B' && Math.abs(ag3[0].a[0]) < 300 && Math.abs(ag3[1].a[0] - 6000) < 300, "autoGridFor: the level's walls give 1, 2 at their x and A, B at their y");
+    const BM = await import(path.join(APP, 'model-beams.js'));
+    B3.ed.modelChange(BM.placeBeams({ storey: B3.levels[0].guid, width: 200, depth: 400, beams: [{ a: [2000, 0], b: [2000, 4000] }, { a: [9000, 0], b: [9000, 4000] }, { a: [2000, 2500], b: [9000, 2500] }] }));
+    const w4 = new ModelWriter(WebIFC, B3.ed.api, B3.ed.mid);   // the tools read through a fresh writer after a change
+    const ag4 = G.autoGridFor(w4, B3.levels[0].id);
+    ok(ag4.map((x) => x.tag).join() === '1,2,A,B,C' && Math.abs(ag4[0].a[0] - 2000) < 1 && Math.abs(ag4[1].a[0] - 9000) < 1 && Math.abs(ag4[4].a[1] - 4000) < 1, 'autoGridFor: the beams decide — 1, 2 at x 2000 and 9000, A, B, C at y 0, 2500 and 4000 (the walls at 0 and 6000 are not lines)');
     // another program's grid is read (shown and snapped to), never changed
     try {
       const Wi = (await import('node:module')).createRequire(path.join(ROOT, 'tools/bimcraft-test/package.json'))('web-ifc');

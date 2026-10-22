@@ -23,7 +23,7 @@ Put a library item into an IFC model: a sink, a work table, a chair. BimCraft wr
 5. Click {{ui:Place in the model}}.
 6. Pick the storey in the placing bar. Storeys above it are hidden while you place, and the view turns to the top.
 7. Move the pointer over the model: a see-through box shows where the item goes.
-8. Press {{key:R}} to turn it 90°. Press {{key:Tab}} (or {{ui:Wall snap}}) to put its back against the nearest wall, facing the room.
+8. Press {{key:R}} to turn it 90°. Press {{key:Tab}} (or {{ui:Snap}}) to snap it to a grid crossing or a grid line, and failing those to put its back against the nearest wall, facing the room.
 9. Click to place it. Or type the position in **X, Y (mm)**, for example `1200, 3400`, and press {{key:Enter}}.
 
 A light or anything else hung from above: set **Mount** to **At the ceiling**. The item's top then sits at the underside of the ceiling over the spot (or at the level's height where there is no ceiling). With a ceiling plan on the plan view, **Mount** starts on **At the ceiling**.
@@ -52,7 +52,7 @@ Each move is one undo step and travels in Studio Live. The item keeps its item n
 
 - An item with no 3D body (a 2D symbol) is placed with a stand-in box; you give its height when asked.
 - More of the same: pick a placed item and use {{ui:Copy}} and {{ui:Paste}}, or {{key:Mod+D}}. See [Copy, paste and duplicate library items](topic:copy-paste).
-- To start every placement with wall snap on, turn on **Start with wall snap on** in [BimCraft settings](topic:settings).
+- To start every placement with snapping on, turn on **Start with snapping on** in [BimCraft settings](topic:settings).
 - Lengths are converted to the model's own units, whatever they are.
 - **Entourage** (trees, shrubs, people, cars) is in the library too: search for "tree", "person" or "car". These are drawn by CadCraft (CC0) and keep their colors when placed (a trunk brown, leaves green, a car's windows see-through), in BimCraft and in other BIM programs. They show in [rendered pictures](topic:render).
 - In an IFC2X3 file the body is written as a faceted solid; in IFC4 as a triangulated face set. Both open in other IFC tools.
@@ -66,7 +66,7 @@ An item can carry its name, description and type in other languages. When it has
 
 - **{{ui:Place in the model}} is missing.** No IFC model is open. Open one first.
 - **The ghost does not follow the pointer.** The pointer is off the model's area, or the storey plane is out of view. Click {{ui:Top}}.
-- **{{ui:Wall snap}} says there are no walls.** The storey has no walls in the IFC (some exports put walls on another storey). Pick that storey, or type X and Y.
+- **{{ui:Snap}} says there are no walls.** The storey has no walls in the IFC (some exports put walls on another storey) and the model has no grids. Pick that storey, or type X and Y.
 - **A file's items are the wrong size.** The file has no units, or says the wrong ones. In {{ui:Files…}} choose the units and read it again.
 
 :::tip

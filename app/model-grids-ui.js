@@ -11,7 +11,7 @@
  * crossings (snapCtx). A picked column shows its shape, size and top in Properties; Delete removes it.
  * IFC: model-grids.js, model-columns.js. Test hook: window.bimcraftGrids = { state, api }.
  */
-import { gridLayout, gridSnap, readGrids, toPlan, placeGrid, changeGridAxis, removeGridAxes, changeGrid, BUBBLES } from './model-grids.js';
+import { gridLayout, gridSnap, readGrids, toPlan, placeGrid, changeGridAxis, removeGridAxes, changeGrid, suggestGrid, autoGridFor, distinctGridAxes, BUBBLES } from './model-grids.js';
 import { COLUMN_DEFAULTS, readColumns, placeColumns, changeColumn, removeColumns } from './model-columns.js';
 import { ModelWriter } from './model-write.js';
 import { fmtLen, parseLen } from './model-units.js';
@@ -27,20 +27,27 @@ export function mountGrids(modelUi) {
     hover: null,        // the last snapped point
     col: { ...COLUMN_DEFAULTS },
     lay: { nu: 4, su: 6000, fu: '1', nv: 3, sv: 6000, fv: 'A', extend: 1500, angle: 0 },
+    gridsVisible: true, // the model bar's Grid lines button (model-ui.js): the plan's grid lines on or off
   };
   let A = null;
   const t = (...a) => A.t(...a);
   const W = () => new ModelWriter(A.ed().W, A.ed().api, A.ed().mid);
   const L = (mm) => fmtLen(mm, A.units());
   const own = () => R.grids.find((g) => g.own) || null;
-  const allAxes = () => R.grids.flatMap((g) => g.axes.map((x) => ({ ...x, own: g.own, bubbles: g.bubbles })));
+  const allAxes = () => distinctGridAxes(R.grids);
   const hint = (key) => { const h = A.root.querySelector('[data-model-hint]'); if (h) h.textContent = t(key); };
   const hintNow = () => hint(A.S.tool === 'column' ? 'model.hint.column' : R.placing ? 'model.hint.gridplace' : R.a ? 'model.hint.grid2' : 'model.hint.grid');
 
   function read() {
     const ed = A.ed();
     if (!ed || !A.S.level) { R.grids = []; R.cols = []; return; }
-    try { const w = W(); R.grids = toPlan(w, A.S.level, readGrids(w)); R.cols = readColumns(w); } catch (e) { R.grids = []; R.cols = []; }
+    try {
+      const w = W();
+      let gs = toPlan(w, A.S.level, readGrids(w));
+      // a model with no IfcGrid of its own: a grid through its columns (else its walls' ends), drawn and snapped to alike
+      if (!gs.some((g) => g.axes.length)) { const s = suggestGrid(w); if (s) gs = toPlan(w, A.S.level, [s]); }
+      R.grids = gs; R.cols = readColumns(w);
+    } catch (e) { R.grids = []; R.cols = []; }
     if (R.pick && !own()?.axes.some((x) => x.tag === R.pick)) R.pick = null;
   }
   /** The grid line under plan point p (within 8 px), ours first. */
@@ -56,6 +63,32 @@ export function mountGrids(modelUi) {
     return best?.x || null;
   }
   const snap = (p, e) => A.snapAt(p, e).p;
+  /** Auto grid: imported/authored column centres, then beam/wall ends — written like
+   *  one you place, so its labels can be changed and its lines moved or deleted afterwards. */
+  function autoGridNow() {
+    if (A.S.busy || A.S.reloading) return false;
+    A.gridsOn(true);
+    if (R.grids.some((g) => !g.auto && g.axes.length)) { A.host.status('Showing the existing grid in plan and 3D.'); return true; }
+    const data = A.S.data;
+    if (!data) { A.host.status(t('model.needs.ifc'), true); return false; }
+    const levels = data.levels;
+    const w = W();
+    // determine which level to use for the grid: prefer the current level, then any level that has structure
+    const currentLevelId = A.S.level;
+    const order = currentLevelId
+      ? [currentLevelId, ...levels.map((l) => l.id).filter((id) => id !== currentLevelId)]
+      : levels.map((l) => l.id);
+    for (const st of order) {
+      const lv = levels.find((l) => l.id === st);
+      if (!lv) continue;
+      const axes = autoGridFor(w, st);
+      if (!axes.length) continue;
+      A.commit(placeGrid({ storey: lv.guid, axes }), { label: t('model.grid'), verb: t('model.verb.placed') });
+      A.host.status(t('model.grid.autoplaced', { n: axes.length }));
+      return true;
+    }
+    A.host.status(t('model.grid.autonone'), true); return false;
+  }
   /** The layout from the dialog with its first crossing at p. */
   const layoutAt = (p) => gridLayout({ origin: p, angle: R.lay.angle, u: { count: R.lay.nu, spacing: R.lay.su, first: R.lay.fu }, v: { count: R.lay.nv, spacing: R.lay.sv, first: R.lay.fv }, extend: R.lay.extend });
 
@@ -66,6 +99,8 @@ export function mountGrids(modelUi) {
     if (place && !place.dataset.bound) {
       place.dataset.bound = '1';
       place.addEventListener('click', () => openPlace());
+      const auto = root.querySelector('[data-grid-auto]');
+      if (auto && !auto.dataset.bound) { auto.dataset.bound = '1'; auto.addEventListener('click', () => autoGridNow()); }
       root.querySelector('[data-grid-bubbles]')?.addEventListener('change', (e) => { if (own()) A.commit(changeGrid({ bubbles: e.target.value }), { label: t('model.grid'), verb: t('model.verb.changed') }); });
       const tag = root.querySelector('[data-grid-tag]');
       tag?.addEventListener('change', () => { const v = tag.value.trim(); if (R.pick && v && v !== R.pick) { const old = R.pick; R.pick = v; A.commit(changeGridAxis(old, { tag: v }), { label: t('model.grid'), verb: t('model.verb.renamed') }); } });
@@ -169,7 +204,7 @@ export function mountGrids(modelUi) {
       if (!R.a) {
         const ax = axisAt(p);
         if (ax) {
-          if (!ax.own) { A.host.status(t('model.grid.foreign'), true); return; }
+          if (!ax.own) { A.host.status(t(ax.auto ? 'model.grid.auto' : 'model.grid.foreign'), true); return; }
           R.pick = ax.tag; bindRows(); hintNow(); return;
         }
         R.pick = null; R.a = q; bindRows(); hintNow(); return;
@@ -189,8 +224,17 @@ export function mountGrids(modelUi) {
       return false;
     },
     toolChanged() { R.a = null; R.pick = null; R.placing = null; R.hover = null; bindRows(); const m = A.root.querySelector('[data-res-tools]'); if (m?.open) m.open = false; },
+    gridsVisible(on) { R.gridsVisible = !!on; A.drawOverlay?.(); },   // the model bar's Grid lines button (model-ui.js)
+    openPlace: () => openPlace(),   // the side panel's and the Library's "Place a grid…" (model-ui.js)
+    autoGrid: () => autoGridNow(),   // "Auto grid": the lines through the model's beams, columns or walls, written as a grid
+    pick(tag) {   // pick one of our lines by its label (the side panel's list)
+      const ax = allAxes().find((x) => x.own && x.tag === String(tag));
+      if (!ax) return false;
+      R.pick = ax.tag; bindRows(); hintNow(); A.drawOverlay?.();
+      return true;
+    },
     refresh() { read(); bindRows(); },
-    scene(scene) { scene.grids = allAxes().map((x) => ({ tag: x.tag, a: x.a, b: x.b, bubbles: x.bubbles, sel: x.own && x.tag === R.pick })); },
+    scene(scene) { scene.grids = R.gridsVisible ? allAxes().map((x) => ({ tag: x.tag, a: x.a, b: x.b, bubbles: x.bubbles, auto: x.auto, sel: x.own && x.tag === R.pick })) : []; },
     overlay(o) {
       if (A.S.tool === 'grid') {
         if (R.hover) o.snap = { p: R.hover, kind: 'grid' };
