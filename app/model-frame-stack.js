@@ -72,26 +72,65 @@ export function matchingFrameStack(seed, members, tolerance = STACK_TOLERANCE_MM
       (seed.kind === 'beam' && alignedBeamSpan(seed, m, tolerance))));
 }
 
-export function readVerticalStack(ed, model, seedKey) {
-  const base = model.keyBase || 0, seedId = seedKey - base;
-  if (!isFrameClass(model.classOf.get(seedId))) throw new Error('Select one beam or column in the active model.');
-  const labels = labelParts(ed.api, ed.mid, model, ed.W), unitMm = ed.placer().unitMm;
-  const members = []; let skipped = 0;
+/** Every frame member with a readable plan axis, and the ones without — what stack matching runs on.
+ *  Read once, so several seeds match without re-reading every member's mesh. */
+function readFrameMembers(ed, model) {
+  const base = model.keyBase || 0, unitMm = ed.placer().unitMm;
+  const labels = labelParts(ed.api, ed.mid, model, ed.W);
+  const members = []; const failed = [];
   for (const [id, cls] of model.classOf) {
-    if (!isFrameClass(cls) || kindOf(cls) !== kindOf(model.classOf.get(seedId))) continue;
-    const key = base + id;
-    const part = labels.get(key) || 'structure';
-    if (part !== (labels.get(seedKey) || 'structure')) continue;
+    if (!isFrameClass(cls)) continue;
+    const kind = kindOf(cls), key = base + id, part = labels.get(key) || 'structure';
     let mesh;
     try { mesh = beamMesh(ed.api, ed.mid, id, unitMm); } catch { mesh = null; }
-    if (!mesh) { skipped++; continue; }
+    const axis = mesh ? (kind === 'beam' ? beamStackAxis(mesh) : { a: mesh.a3, b: mesh.b3 }) : null;
+    if (!axis) { failed.push({ key, kind, part }); continue; }
     const line = ed.api.GetLine(ed.mid, id, false);
-    const axis = kindOf(cls) === 'beam' ? beamStackAxis(mesh) : { a: mesh.a3, b: mesh.b3 };
-    if (!axis) { skipped++; continue; }
-    members.push({ key, guid: line.GlobalId.value, kind: kindOf(cls), part, ...axis });
+    members.push({ key, guid: line.GlobalId.value, kind, part, ...axis });
   }
-  const seed = members.find((m) => m.key === seedKey);
-  if (!seed) throw new Error('This member has no readable frame axis for stack matching.');
-  const matches = matchingFrameStack(seed, members);
-  return { keys: matches.map((m) => m.key), members: matches, skipped, toleranceMm: STACK_TOLERANCE_MM };
+  return { members, failed };
+}
+
+/** The vertical stacks of the selected members at once: each seed matches the members of its own kind at its own
+ *  projected position (columns at the same plan position, beams on the same line), and the result is their union —
+ *  two beams at different places bring back both of their stacks, and a beam and a column each bring their own.
+ *  seedKeys = the selected keys, one or more. */
+export function readVerticalStacks(ed, model, seedKeys) {
+  const base = model.keyBase || 0;
+  const seeds = [...new Set(seedKeys)];
+  if (!seeds.length) throw new Error('Select at least one beam or column in the active model.');
+  for (const key of seeds) if (!isFrameClass(model.classOf.get(key - base)))
+    throw new Error(seeds.length === 1 ? 'Select one beam or column in the active model.' : 'Select beams or columns in the active model.');
+  const { members, failed } = readFrameMembers(ed, model);
+  const byKey = new Map(members.map((m) => [m.key, m]));
+  const order = new Map(members.map((m, i) => [m.key, i]));
+  const matched = new Set();
+  const perSeed = [];
+  const scope = new Set();
+  for (const key of seeds) {
+    const seed = byKey.get(key);
+    if (!seed) throw new Error(seeds.length === 1 ? 'This member has no readable frame axis for stack matching.'
+      : 'One of the selected members has no readable frame axis for stack matching.');
+    scope.add(seed.kind + '|' + seed.part);
+    const hits = matchingFrameStack(seed, members).map((m) => m.key);
+    perSeed.push(hits);
+    for (const k of hits) matched.add(k);
+  }
+  // Two seeds are one stack when their matches meet: members at the same position match each other's seed.
+  const stacks = [];
+  for (const hits of perSeed) {
+    const merged = stacks.find((s) => hits.some((k) => s.has(k)));
+    if (merged) for (const k of hits) merged.add(k);
+    else stacks.push(new Set(hits));
+  }
+  const keys = [...matched].sort((a, b) => order.get(a) - order.get(b));
+  return { keys, members: keys.map((k) => byKey.get(k)), stacks: stacks.length,
+    skipped: failed.filter((m) => scope.has(m.kind + '|' + m.part)).length, toleranceMm: STACK_TOLERANCE_MM };
+}
+
+/** The vertical stack of one selected member (its matches plus itself), with the members it matched. */
+export function readVerticalStack(ed, model, seedKey) {
+  const base = model.keyBase || 0;
+  if (!isFrameClass(model.classOf.get(seedKey - base))) throw new Error('Select one beam or column in the active model.');
+  return readVerticalStacks(ed, model, [seedKey]);
 }

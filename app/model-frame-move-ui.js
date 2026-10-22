@@ -2,7 +2,7 @@
 /** Select, then drag a beam/column in Draw; the existing pointer system owns pan. */
 import { isFrameClass, moveFrameMembers } from './model-frame-move.js';
 import { fmtLen } from './model-units.js';
-import { readVerticalStack } from './model-frame-stack.js';
+import { readVerticalStacks } from './model-frame-stack.js';
 
 export function mountFrameMove(modelUi) {
   let A;
@@ -10,35 +10,37 @@ export function mountFrameMove(modelUi) {
   const button = document.createElement('button');
   button.type = 'button'; button.className = 'btn-line btn-sm-cc'; button.dataset.frameStack = '';
   button.textContent = 'Select vertical stack'; button.hidden = true;
-  button.title = 'Select aligned beams above/below (10 mm sideways tolerance; small end trims allowed), or columns at the same plan position.';
+  button.title = 'Select the aligned beams above/below for each selected beam (10 mm sideways tolerance; small end trims allowed), or columns at the same plan position.';
   function stackSelected(keys = A.selectedKeys()) {
     return !!R.stack && R.stack.editor === A.ed() && keys.length === R.stack.keys.length && keys.every((key) => R.stack.keys.includes(key));
   }
   function updateButton() {
     const keys = A.selectedKeys(), active = stackSelected(keys), model = A.host.model();
-    const single = keys.length === 1 && isFrameClass(model?.classOf.get(keys[0] - A.kb()));
-    button.hidden = !single && !active;
+    const frame = keys.length > 0 && keys.every((k) => isFrameClass(model?.classOf.get(k - A.kb())));
+    button.hidden = !frame && !active;
     button.disabled = R.matching;
-    button.textContent = active ? `Clear stack (${keys.length})` : 'Select vertical stack';
+    button.textContent = active ? `Clear stack${R.stack.stacks === 1 ? '' : 's'} (${keys.length})` : 'Select vertical stack';
     button.setAttribute('aria-pressed', String(!!active));
   }
   button.addEventListener('click', async () => {
     if (A.S.busy || A.S.reloading) return;
     if (stackSelected()) {
-      const seed = R.stack.seed; R.stack = null; A.host.select([seed]); updateButton(); return;
+      const seeds = R.stack.seeds; R.stack = null; A.host.select([...seeds]); updateButton(); return;
     }
-    const keys = A.selectedKeys();
-    if (keys.length !== 1) return;
+    const keys = A.selectedKeys(), model = A.host.model();
+    if (!keys.length || !keys.every((k) => isFrameClass(model?.classOf.get(k - A.kb())))) return;
     R.matching = true; button.disabled = true; const editor = A.ed();
     A.host.status('Finding matching frame members above and below…');
     await new Promise(requestAnimationFrame);
     try {
-      if (editor !== A.ed() || A.selectedKeys().length !== 1 || A.selectedKeys()[0] !== keys[0]) return;
-      const result = readVerticalStack(editor, A.host.model(), keys[0]);
+      if (editor !== A.ed() || A.selectedKeys().join() !== keys.join()) return;
+      const result = readVerticalStacks(editor, A.host.model(), keys);
       if (A.S.tool !== 'select') A.setTool('select');
-      R.stack = { editor, seed: keys[0], keys: result.keys };
+      R.stack = { editor, seeds: [...keys], keys: result.keys, stacks: result.stacks };
       A.host.select(result.keys);
-      A.host.status(`Selected ${result.keys.length} aligned frame members. Drag the visible member or centre grip to move the whole stack.` +
+      A.host.status(`Selected ${result.keys.length} aligned frame member${result.keys.length === 1 ? '' : 's'}` +
+        (result.stacks === 1 ? '' : ` in ${result.stacks} vertical stacks`) +
+        `. Drag the visible member or centre grip to move ${result.stacks === 1 ? 'the whole stack' : 'all of them together'}.` +
         (result.skipped ? ` ${result.skipped} members had no readable axis.` : ''));
     } catch (error) { A.host.status(error.message, true); }
     finally { R.matching = false; updateButton(); }
